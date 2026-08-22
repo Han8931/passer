@@ -1,0 +1,28 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Go build
+*.out
+bin/
+
+# Dependencies
+vendor/
+
+# IDE/editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local config (config.example.toml is the tracked one)
+config.toml
+
+# Coverage / logs
+coverage.*
+*.log

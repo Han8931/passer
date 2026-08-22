@@ -1,0 +1,103 @@
+# passer configuration
+#
+# Copied to $XDG_CONFIG_HOME/passer/config.toml (default
+# ~/.config/passer/config.toml) on first run. Every key below is optional;
+# anything you leave out keeps its default.
+#
+# Edit it from inside the app with `:config` — passer reloads it when your
+# editor exits.
+
+# Where the password store lives.
+#
+# Empty means "do what pass does": use $PASSWORD_STORE_DIR if it is set, and
+# ~/.password-store otherwise. Set it only if you want passer pinned to one
+# store regardless of the surrounding shell.
+store_dir = ''
+
+# Field names treated as the account identifier by the "copy username" key.
+# These are tried first; the built-in conventions (login, username, user,
+# email, account) still apply afterwards.
+username_fields = ['login', 'username', 'user', 'email']
+
+
+[security]
+
+# How long a copied secret stays on the clipboard, in seconds.
+# 45 matches pass's own default. 0 disables auto-clear entirely — passer will
+# say so when you copy, rather than implying a timer that never fires.
+#
+# The clipboard is only wiped if it still holds what passer put there, so
+# anything you copied in the meantime is left alone.
+clip_clear_seconds = 45
+
+# How long a revealed password stays on screen before it is masked again.
+# A revealed password is readable by anyone near your terminal and survives in
+# scrollback; this bounds that exposure. 0 keeps it visible until you hide it.
+reveal_seconds = 30
+
+# Drop the decrypted entry from memory after this many seconds without a
+# keypress, returning to the list. 0 keeps it until you close the detail view.
+lock_seconds = 120
+
+
+[generate]
+
+# Length of generated passwords.
+length = 24
+
+# Include punctuation ([:punct:], the same class `pass generate` uses).
+# Set false for sites that reject symbols — the equivalent of `pass generate -n`.
+symbols = true
+
+
+[keys]
+
+# Every key is rebindable. Use the names bubbletea reports: single characters,
+# 'enter', 'esc', 'tab', 'up', 'down', 'ctrl+a', and ' ' for space.
+
+quit = 'q'            # back out of a filter or view; quit from the plain list
+up = 'k'
+down = 'j'
+open = 'enter'        # decrypt and open the entry
+cancel = 'esc'
+search = '/'          # fuzzy filter
+command = ':'         # command line
+help = '?'
+reload = 'R'          # re-read the store from disk
+
+copy_password = 'y'
+copy_username = 'u'
+copy_url = 'b'
+
+reveal = ' '          # show/hide the password in the detail view
+add = 'a'
+edit = 'e'            # open the entry in $EDITOR via `pass edit`
+delete = 'D'
+rename = 'm'          # rename / move
+theme_toggle = 't'    # cycle palettes, applied and saved immediately
+
+
+[theme]
+
+# Built-in palettes: light (default), dark, purple, ocean, forest, rose,
+# graphite. Switch with `:theme <name>`, or cycle them live with `t`.
+#
+# A preset provides the base colors; any key you set below overrides it, so you
+# can start from a palette and adjust a single hue.
+preset = 'light'
+
+title = '#2563EB'          # panel titles and section headings
+heading = '#0F766E'        # field labels
+accent = '#D97706'         # cursor, panel title text, fuzzy-match highlights
+muted = '#64748B'          # folder prefixes, masked values, secondary text
+success = '#16A34A'
+warning = '#B45309'        # revealed secrets are drawn in this color
+danger = '#DC2626'         # errors and delete confirmations
+border = '#CBD5E1'         # rounded panel frames
+selection_bg = '#DBEAFE'   # highlighted row
+selection_fg = '#0F172A'
+status_bg = '#E2E8F0'      # status bar
+status_fg = '#0F172A'
+status_alt_bg = '#0F766E'  # table header bar and key-hint chips
+status_alt_fg = '#F8FAFC'
+row_stripe_bg = '#F1F5F9'  # faint tint on alternating rows
