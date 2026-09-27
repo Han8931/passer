@@ -50,13 +50,20 @@ passer from a launcher rather than a terminal.
 
 ### List
 
-The opening view: every entry in the store as a flat, sorted list of full paths,
-with the folder prefix dimmed so the leaf name stands out. The `UPDATED` column
-is the file's modification time.
+The opening view: every entry in the store, sorted by path, in three aligned
+columns: `Folder`, `Entry`, and `Updated` (the file's modification time). Each
+folder is named once at the top of its run of entries, so the store reads like
+a tree while every entry name still starts in the same column. Entries at the
+top of the store show `–` in the folder column. Search results are ranked
+rather than grouped, so there every row names its folder.
 
 The list is deliberately flat rather than an expandable tree. A tree needs you
 to know which folder an entry is in before you can find it; a flat list plus
 fuzzy search does not.
+
+The status bar shows the mode (`LIST`, `SEARCH`, `ENTRY`, …), your position in
+the list, and any active filter. Copy and reveal countdowns are pinned to its
+right edge.
 
 **Nothing in this view is decrypted.** Moving the cursor reads no GPG files and
 triggers no pinentry prompt — the entry names and mtimes all come from the
@@ -64,15 +71,17 @@ filesystem. Decryption happens only when you open or copy from a specific entry.
 
 ### Detail
 
-`Enter` decrypts one entry and shows its contents as numbered rows: the password
-first, then each `key: value` metadata line, then any free-form notes.
+`Enter` decrypts one entry and opens it in a panel under the list, which stays
+on screen so you keep your place. The entry shows as numbered rows: the
+password first, then each `key: value` metadata line, then any free-form
+notes.
 
 Secrets are masked. The password is always masked, and so is any field whose
 name looks like a second secret — `otp`, `totp`, `token`, `pin`, `recovery`,
-`seed`, `secret`, `key`. Everything else (`login`, `url`, and friends) is shown
+`seed`, `secret`, `key`, as well as a pass-otp `otpauth://` line. Everything else (`login`, `url`, and friends) is shown
 in clear, because that is what makes the view worth opening.
 
-`space` reveals the masked values; the panel title gains a `· REVEALED` marker
+`space` reveals the masked values; the panel title gains a `• REVEALED` marker
 and the status bar counts down to when they will be hidden again.
 
 Passer parses metadata leniently. A line only becomes a `key: value` field if

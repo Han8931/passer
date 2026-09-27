@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -208,6 +210,103 @@ func TestListRowsLeavesRoomForChrome(t *testing.T) {
 	if plain >= m.height {
 		t.Errorf("listRows = %d, which leaves no room for the header, hints, and status bar", plain)
 	}
+}
+
+// Every screen must fit the terminal exactly. The prompt line is the last
+// thing drawn above the hint bar, so a layout that over-fills the screen loses
+// it first — which once made the delete confirmation invisible.
+func TestViewsFitTheTerminalAndKeepThePrompt(t *testing.T) {
+	names := make([]string, 40)
+	for i := range names {
+		names[i] = fmt.Sprintf("folder%d/entry%d", i/5, i)
+	}
+	entry := pass.ParseEntry("folder0/entry0", "pw\nlogin: han\nurl: https://x\nnote\n")
+
+	cases := []struct {
+		name   string
+		setup  func(m *Model)
+		prompt string
+	}{
+		{"list", func(m *Model) {}, ""},
+		{"filter", func(m *Model) { m.query = "entry"; m.applyFilter() }, "(esc to clear)"},
+		{"delete", func(m *Model) { m.mode = modeConfirmDelete; m.confirmDelete = "folder0/entry0" }, "y to confirm"},
+		{"rename", func(m *Model) { m.mode = modeRename }, "rename →"},
+		{"command", func(m *Model) { m.mode = modeCommand; m.prevMode = modeList }, " : "},
+		{"detail", func(m *Model) { m.entry = &entry; m.mode = modeDetail }, ""},
+		{"detail command", func(m *Model) {
+			m.entry = &entry
+			m.mode, m.prevMode = modeCommand, modeDetail
+		}, " : "},
+	}
+	for _, c := range cases {
+		for _, h := range []int{12, 30} {
+			m := testModel(names...)
+			m.height = h
+			m.cursor = 30
+			c.setup(&m)
+
+			lines := strings.Split(m.View(), "\n")
+			if len(lines) != h {
+				t.Errorf("%s at height %d: view is %d lines", c.name, h, len(lines))
+			}
+			plain := stripANSI(m.View())
+			if c.prompt != "" && !strings.Contains(plain, c.prompt) {
+				t.Errorf("%s at height %d: prompt %q is not on screen", c.name, h, c.prompt)
+			}
+			if c.name != "detail" && c.name != "detail command" && !strings.Contains(plain, "entry30") {
+				t.Errorf("%s at height %d: the cursor's entry is not on screen", c.name, h)
+			}
+		}
+	}
+}
+
+func TestListNamesEachFolderOncePerGroup(t *testing.T) {
+	m := testModel("bank/chase", "bank/schwab", "web/github", "wifi")
+	m.cursor = 3
+	plain := stripANSI(m.View())
+
+	if n := strings.Count(plain, "bank"); n != 1 {
+		t.Errorf("bank is named %d times, want once for its group", n)
+	}
+	if !strings.Contains(plain, "–") {
+		t.Error("a root entry should show a dash, not a blank that reads as 'same folder'")
+	}
+
+	// Filtered results are ranked, not grouped: every row names its folder.
+	m.query = "a"
+	m.applyFilter()
+	if n := strings.Count(stripANSI(m.View()), "bank"); n != 2 {
+		t.Errorf("bank is named %d times in search results, want every row", n)
+	}
+}
+
+func TestSplitName(t *testing.T) {
+	cases := map[string][2]string{
+		"wifi":            {"", "wifi"},
+		"web/github":      {"web", "github"},
+		"web/deep/nested": {"web/deep", "nested"},
+	}
+	for in, want := range cases {
+		if f, e := splitName(in); f != want[0] || e != want[1] {
+			t.Errorf("splitName(%q) = %q, %q; want %q, %q", in, f, e, want[0], want[1])
+		}
+	}
+}
+
+func TestTextOnPicksAReadableColor(t *testing.T) {
+	if got := textOn("#F2CC60"); got == "#FFFFFF" {
+		t.Error("white text on dark's pale yellow accent is unreadable")
+	}
+	if got := textOn("#0F766E"); got != "#FFFFFF" {
+		t.Errorf("textOn(deep teal) = %s, want white", got)
+	}
+	if got := textOn("bogus"); got != "#FFFFFF" {
+		t.Errorf("textOn(bogus) = %s, want the white fallback", got)
+	}
+}
+
+func stripANSI(s string) string {
+	return regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]").ReplaceAllString(s, "")
 }
 
 func TestListRowsStaysPositiveOnTinyTerminals(t *testing.T) {

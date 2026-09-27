@@ -56,7 +56,6 @@ type uiStyles struct {
 	Success     lipgloss.Style
 	Status      lipgloss.Style
 	StatusAlt   lipgloss.Style
-	RowStripe   lipgloss.Style
 	Panel       lipgloss.Style
 	PanelTitle  lipgloss.Style
 	TableHeader lipgloss.Style
@@ -645,18 +644,73 @@ func (m Model) currentName() string {
 	return item.Name
 }
 
+// screenLayout is how the rows between the top of the screen and the status
+// bar are shared out. The view and the scroll logic both read it, so what is
+// drawn and what the cursor thinks is visible can't disagree.
+type screenLayout struct {
+	listRows   int // entry rows inside the list panel
+	detailRows int // field rows inside the detail panel; 0 when it is closed
+}
+
+// minListRows keeps a sliver of the list on screen while an entry is open, so
+// you never lose your place in the store.
+const minListRows = 3
+
+func (m Model) layout() screenLayout {
+	height := m.height
+	if height <= 0 {
+		height = 30
+	}
+	// Status bar, then the list panel's top edge, column header, and bottom edge.
+	avail := height - 1 - m.footerLineCount() - 3
+
+	var l screenLayout
+	if m.detailOpen() {
+		n := len(m.detailRows())
+		if most := avail - 2 - minListRows; n > most {
+			n = most
+		}
+		if n < 1 {
+			n = 1
+		}
+		l.detailRows = n
+		avail -= n + 2 // the detail panel's own top and bottom edges
+	}
+	if avail < 1 {
+		avail = 1
+	}
+	l.listRows = avail
+	return l
+}
+
 // listRows is how many entry rows fit inside the list panel.
-func (m Model) listRows() int {
-	// Terminal height minus: panel borders (2), table header (1), hint bar (1),
-	// status bar (1), and the search prompt line when it is showing.
-	rows := m.height - 5
-	if m.mode == modeSearch || m.query != "" {
-		rows--
+func (m Model) listRows() int { return m.layout().listRows }
+
+// detailOpen reports whether the decrypted entry is on screen, including while
+// a : command typed from the detail view is being entered.
+func (m Model) detailOpen() bool {
+	if m.entry == nil {
+		return false
 	}
-	if rows < 1 {
-		rows = 1
+	return m.mode == modeDetail || (m.mode == modeCommand && m.prevMode == modeDetail)
+}
+
+// promptActive reports whether a one-line prompt sits under the list.
+func (m Model) promptActive() bool {
+	switch m.mode {
+	case modeSearch, modeCommand, modeRename, modeConfirmDelete:
+		return true
 	}
-	return rows
+	return m.query != ""
+}
+
+// footerLineCount is the number of lines between the panels and the status
+// bar: the hint bar, plus a prompt line when one is showing.
+func (m Model) footerLineCount() int {
+	if m.promptActive() {
+		return 2
+	}
+	return 1
 }
 
 func (m *Model) syncScroll() {

@@ -50,8 +50,6 @@ func buildStyles(theme config.Theme) uiStyles {
 	styles.StatusAlt = applyBg(styles.StatusAlt, theme.StatusAltBg)
 	styles.StatusAlt = applyFg(styles.StatusAlt, theme.StatusAltFg)
 
-	styles.RowStripe = applyBg(lipgloss.NewStyle(), theme.RowStripeBg)
-
 	// Structural styles derived from the theme so the framing stays
 	// configurable and matches bada's look.
 	styles.Panel = applyFg(lipgloss.NewStyle().Border(lipgloss.RoundedBorder()), theme.Border)
@@ -945,7 +943,8 @@ func (m Model) detailRows() []detailRow {
 		// seed or recovery code is no less sensitive than the password.
 		rows = append(rows, detailRow{label: f.Key, value: f.Value, secret: isSecretField(f.Key)})
 	}
-	for i, note := range m.entry.Notes {
+	notes := 0
+	for _, note := range m.entry.Notes {
 		if strings.TrimSpace(note) == "" {
 			continue
 		}
@@ -955,7 +954,8 @@ func (m Model) detailRows() []detailRow {
 			rows = append(rows, detailRow{label: "otp", value: note, secret: true})
 			continue
 		}
-		rows = append(rows, detailRow{label: fmt.Sprintf("note %d", i+1), value: note})
+		notes++
+		rows = append(rows, detailRow{label: fmt.Sprintf("note %d", notes), value: note})
 	}
 	return rows
 }

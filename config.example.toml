@@ -100,4 +100,4 @@ status_bg = '#E2E8F0'      # status bar
 status_fg = '#0F172A'
 status_alt_bg = '#0F766E'  # table header bar and key-hint chips
 status_alt_fg = '#F8FAFC'
-row_stripe_bg = '#F1F5F9'  # faint tint on alternating rows
+row_stripe_bg = '#F1F5F9'  # kept for bada compatibility; the list no longer stripes rows

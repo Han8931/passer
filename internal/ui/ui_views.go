@@ -16,10 +16,8 @@ func (m Model) View() string {
 		return m.fillView(m.renderHelpView())
 	case modeAdd:
 		return m.fillView(m.renderAddModal())
-	case modeDetail:
-		return m.fillView(m.renderDetailView())
 	default:
-		return m.fillView(m.renderListView())
+		return m.fillView(m.renderMainView())
 	}
 }
 
@@ -42,142 +40,233 @@ func (m Model) fillView(body string) string {
 	return strings.Join(lines, "\n") + "\n" + status
 }
 
-// ---------------------------------------------------------------------------
-// List
-// ---------------------------------------------------------------------------
-
-func (m Model) renderListView() string {
-	inner := m.panelInnerWidth()
-	rows := m.listRows()
-
-	// Column layout: the Updated column is fixed and the name takes the rest,
-	// because a truncated date tells you nothing while a truncated name is
-	// still recognisable.
-	const updatedWidth = 12
-	nameWidth := inner - updatedWidth - 3
-	if nameWidth < 10 {
-		nameWidth = 10
+// renderMainView stacks the list, the open entry (if any), the prompt line, and
+// the hint bar. The list stays on screen while an entry is open, the way bada
+// keeps its task table above the detail pane, so you never lose your place.
+func (m Model) renderMainView() string {
+	l := m.layout()
+	out := m.renderListPanel(l.listRows)
+	if l.detailRows > 0 {
+		out += "\n" + m.renderDetailPanel(l.detailRows)
 	}
-
-	var b strings.Builder
-	header := " " + padTo("NAME", nameWidth) + " " + padTo("UPDATED", updatedWidth) + " "
-	b.WriteString(m.styles.TableHeader.Render(padTo(header, inner)))
-	b.WriteString("\n")
-
-	if len(m.matches) == 0 {
-		b.WriteString(m.emptyListMessage())
-		for i := 1; i < rows; i++ {
-			b.WriteString("\n")
-		}
+	if line := m.promptLine(); line != "" {
+		out += "\n" + line
+	}
+	if m.detailOpen() {
+		out += "\n" + m.hintBar(m.detailHints())
 	} else {
-		end := m.scroll + rows
-		if end > len(m.matches) {
-			end = len(m.matches)
-		}
-		for i := m.scroll; i < end; i++ {
-			b.WriteString(m.renderListRow(i, nameWidth, updatedWidth, inner))
-			if i < end-1 {
-				b.WriteString("\n")
-			}
-		}
-		for i := end - m.scroll; i < rows; i++ {
-			b.WriteString("\n")
-		}
-	}
-
-	title := fmt.Sprintf("Passer · %d", len(m.matches))
-	if m.query != "" {
-		title = fmt.Sprintf("Passer · %d/%d", len(m.matches), len(m.items))
-	}
-
-	out := m.panel(title, b.String())
-	if m.mode == modeSearch || m.query != "" {
-		out += "\n" + m.renderSearchLine()
-	}
-	out += "\n" + m.hintBar(m.listHints())
-
-	if m.mode == modeConfirmDelete {
-		out += "\n" + m.renderConfirmLine()
-	}
-	if m.mode == modeRename {
-		out += "\n" + m.renderRenameLine()
-	}
-	if m.mode == modeCommand {
-		out += "\n" + m.renderCommandLine()
+		out += "\n" + m.hintBar(m.listHints())
 	}
 	return out
 }
 
-func (m Model) renderListRow(i, nameWidth, updatedWidth, inner int) string {
+// promptLine is the single line under the panels: whichever prompt is active,
+// else the committed search filter. Must agree with promptActive.
+func (m Model) promptLine() string {
+	switch m.mode {
+	case modeConfirmDelete:
+		return m.renderConfirmLine()
+	case modeRename:
+		return m.renderRenameLine()
+	case modeCommand:
+		return m.renderCommandLine()
+	}
+	if m.mode == modeSearch || m.query != "" {
+		return m.renderSearchLine()
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------------------
+// List
+// ---------------------------------------------------------------------------
+
+// listColumns are the list's column widths. They are sized from the whole
+// store, not the visible slice, so columns hold still while you scroll or
+// filter.
+type listColumns struct {
+	folder, entry, updated int
+}
+
+const (
+	listLead     = 2 // cursor marker
+	updatedWidth = 10
+)
+
+func (m Model) listColumns() listColumns {
+	inner := m.panelInnerWidth()
+	cols := listColumns{folder: len("Folder"), entry: 12, updated: updatedWidth}
+	for _, it := range m.items {
+		folder, entry := splitName(it.Name)
+		if w := lipgloss.Width(folder); w > cols.folder {
+			cols.folder = w
+		}
+		if w := lipgloss.Width(entry); w > cols.entry {
+			cols.entry = w
+		}
+	}
+	// Caps keep the Updated column next to the names instead of stranded at
+	// the far edge, where the eye has to travel a whole row to reach it.
+	if cols.folder > 24 {
+		cols.folder = 24
+	}
+	if cols.entry > 48 {
+		cols.entry = 48
+	}
+	// Then fit the terminal, giving up entry width first and folder second.
+	over := listLead + cols.folder + 1 + cols.entry + 1 + cols.updated - inner
+	for _, col := range []*int{&cols.entry, &cols.folder} {
+		if over <= 0 {
+			break
+		}
+		room := *col - 6
+		if room > over {
+			room = over
+		}
+		if room > 0 {
+			*col -= room
+			over -= room
+		}
+	}
+	return cols
+}
+
+// splitName separates an entry name into its folder and leaf. Root entries
+// have no folder.
+func splitName(name string) (folder, entry string) {
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		return name[:idx], name[idx+1:]
+	}
+	return "", name
+}
+
+func (m Model) renderListPanel(rows int) string {
+	inner := m.panelInnerWidth()
+	cols := m.listColumns()
+
+	header := strings.Repeat(" ", listLead) +
+		padTo("Folder", cols.folder) + " " +
+		padTo("Entry", cols.entry) + " " +
+		padTo("Updated", cols.updated)
+	lines := []string{m.styles.TableHeader.Render(padTo(header, inner))}
+
+	if len(m.matches) == 0 {
+		lines = append(lines, m.emptyListMessage())
+	} else {
+		start := m.visibleStart(rows)
+		end := start + rows
+		if end > len(m.matches) {
+			end = len(m.matches)
+		}
+		prevFolder := ""
+		for i := start; i < end; i++ {
+			line, folder := m.renderListRow(i, cols, inner, i > start, prevFolder)
+			lines = append(lines, line)
+			prevFolder = folder
+		}
+	}
+	for len(lines) < rows+1 {
+		lines = append(lines, "")
+	}
+
+	return m.panel("passer • "+shortenPath(m.storeDir()), strings.Join(lines, "\n"))
+}
+
+// visibleStart is the first match drawn. It starts from the stored scroll
+// offset but always brings the cursor into view, so a layout change — an
+// entry opening underneath the list — can't strand the cursor off screen.
+func (m Model) visibleStart(rows int) int {
+	start := m.scroll
+	if m.cursor < start {
+		start = m.cursor
+	}
+	if m.cursor >= start+rows {
+		start = m.cursor - rows + 1
+	}
+	if start > len(m.matches)-rows {
+		start = len(m.matches) - rows
+	}
+	if start < 0 {
+		start = 0
+	}
+	return start
+}
+
+// renderListRow draws one entry and returns its folder, so the next row can
+// tell whether it continues the same group.
+func (m Model) renderListRow(i int, cols listColumns, inner int, continues bool, prevFolder string) (string, string) {
 	mt := m.matches[i]
 	if mt.index < 0 || mt.index >= len(m.items) {
 		// Matches built against a longer item slice; see currentItem.
-		return strings.Repeat(" ", inner)
+		return strings.Repeat(" ", inner), ""
 	}
 	item := m.items[mt.index]
 	selected := i == m.cursor
+	folder, entry := splitName(item.Name)
 
-	name := m.renderName(item.Name, mt.positions, nameWidth, selected)
-	updated := m.styles.Muted.Render(padTo(humanTime(item.Modified), updatedWidth))
-	if selected {
-		updated = padTo(humanTime(item.Modified), updatedWidth)
-	}
-
-	cursor := "  "
-	if selected {
-		cursor = m.styles.Accent.Render("▸ ")
-		if m.loading == item.Name {
-			cursor = m.styles.Warning.Render("◌ ")
-		}
-	}
-
-	line := cursor + padTo(name, nameWidth) + " " + updated + " "
-	line = padTo(line, inner)
-
-	if selected {
-		return stripeLine(m.styles.Selection, line)
-	}
-	if i%2 == 1 {
-		return stripeLine(m.styles.RowStripe, line)
-	}
-	return line
-}
-
-// renderName styles one entry name: the folder prefix is muted so the leaf
-// stands out, and fuzzy-matched characters are highlighted in place.
-func (m Model) renderName(name string, positions []int, width int, selected bool) string {
-	runes := []rune(name)
-	if len(runes) > width {
-		// Keep the tail: the leaf name is what identifies the entry, so drop
-		// characters from the folder prefix instead.
-		runes = append([]rune("…"), runes[len(runes)-width+1:]...)
-		positions = nil
-	}
-
-	hit := make(map[int]bool, len(positions))
-	for _, p := range positions {
+	hit := make(map[int]bool, len(mt.positions))
+	for _, p := range mt.positions {
 		hit[p] = true
 	}
+	folderRunes := len([]rune(folder))
+	entryOffset := 0
+	if folder != "" {
+		entryOffset = folderRunes + 1
+	}
 
-	slash := -1
-	for i, r := range runes {
-		if r == '/' {
-			slash = i
+	// Name each folder once per run of entries, so groups read like a tree.
+	// Search results are ranked rather than grouped, and their folder text may
+	// carry match highlights, so there every row names its folder.
+	var folderCell string
+	switch {
+	case folder == "":
+		folderCell = m.styles.Muted.Render("–")
+	case continues && folder == prevFolder && m.query == "" && !selected:
+		folderCell = ""
+	default:
+		base := m.styles.Heading.UnsetBold()
+		if selected {
+			base = lipgloss.NewStyle()
+		}
+		folderCell = m.highlight(folder, 0, hit, cols.folder, base)
+	}
+
+	entryCell := m.highlight(entry, entryOffset, hit, cols.entry, lipgloss.NewStyle())
+	updated := humanTime(item.Modified)
+	if !selected {
+		updated = m.styles.Muted.Render(updated)
+	}
+
+	lead := "  "
+	if selected {
+		lead = m.styles.Accent.Render("▸ ")
+		if m.loading == item.Name {
+			lead = m.styles.Warning.Render("◌ ")
 		}
 	}
 
+	line := lead + padTo(folderCell, cols.folder) + " " + padTo(entryCell, cols.entry) + " " + padTo(updated, cols.updated)
+	line = padTo(line, inner)
+	if selected {
+		line = stripeLine(m.styles.Selection, line)
+	}
+	return line, folder
+}
+
+// highlight renders text in base, with fuzzy-matched runes picked out.
+// positions index the full entry name; offset is where text starts within it.
+// Over-long text keeps its head and ends in an ellipsis.
+func (m Model) highlight(text string, offset int, hit map[int]bool, width int, base lipgloss.Style) string {
+	runes := []rune(text)
+	if len(runes) > width {
+		runes = append(runes[:width-1], '…')
+	}
 	var b strings.Builder
 	for i, r := range runes {
-		s := string(r)
-		switch {
-		case hit[i]:
-			b.WriteString(m.styles.MatchHit.Render(s))
-		case selected:
-			b.WriteString(s)
-		case i <= slash:
-			b.WriteString(m.styles.Muted.Render(s))
-		default:
-			b.WriteString(s)
+		if hit[offset+i] && r != '…' {
+			b.WriteString(m.styles.MatchHit.Render(string(r)))
+		} else {
+			b.WriteString(base.Render(string(r)))
 		}
 	}
 	return b.String()
@@ -230,10 +319,9 @@ func (m Model) listHints() []keyHint {
 // Detail
 // ---------------------------------------------------------------------------
 
-func (m Model) renderDetailView() string {
-	if m.entry == nil {
-		return m.renderListView()
-	}
+// renderDetailPanel draws the open entry in at most maxRows field rows,
+// scrolling to keep the field cursor visible.
+func (m Model) renderDetailPanel(maxRows int) string {
 	inner := m.panelInnerWidth()
 	rows := m.detailRows()
 
@@ -251,8 +339,18 @@ func (m Model) renderDetailView() string {
 		valueWidth = 10
 	}
 
+	start := 0
+	if m.entryCursor >= maxRows {
+		start = m.entryCursor - maxRows + 1
+	}
+	end := start + maxRows
+	if end > len(rows) {
+		end = len(rows)
+	}
+
 	var b strings.Builder
-	for i, r := range rows {
+	for i := start; i < end; i++ {
+		r := rows[i]
 		num := m.styles.Muted.Render(fmt.Sprintf(" %2d ", i+1))
 		label := m.styles.Heading.Render(padTo(r.label, labelWidth))
 
@@ -271,22 +369,16 @@ func (m Model) renderDetailView() string {
 			line = stripeLine(m.styles.Selection, line)
 		}
 		b.WriteString(line)
-		if i < len(rows)-1 {
+		if i < end-1 {
 			b.WriteString("\n")
 		}
 	}
 
 	title := m.entry.Name
 	if m.revealed {
-		title += "  ·  REVEALED"
+		title += " • REVEALED"
 	}
-
-	out := m.panel(title, b.String())
-	out += "\n" + m.hintBar(m.detailHints())
-	if m.mode == modeCommand {
-		out += "\n" + m.renderCommandLine()
-	}
-	return out
+	return m.panel(title, b.String())
 }
 
 // maskOf renders a secret as dots without leaking its exact length, which is
@@ -322,7 +414,7 @@ func (m Model) detailHints() []keyHint {
 func (m Model) renderAddModal() string {
 	a := m.add
 	if a == nil {
-		return m.renderListView()
+		return m.renderMainView()
 	}
 
 	width := m.panelInnerWidth()
@@ -499,63 +591,133 @@ func (m Model) renderHelpView() string {
 // Status bar
 // ---------------------------------------------------------------------------
 
+// renderStatusBar mirrors bada's: an app badge and a mode badge, then the
+// position and any filter, then the latest message. The live countdowns are
+// pinned to the right; they are the only way to know how long a secret stays
+// exposed, so they never move or get pushed off by a long message.
 func (m Model) renderStatusBar() string {
 	width := m.width - 2 // the same anti-wrap gutter the panels leave
 	if width < 10 {
 		width = 10
 	}
+	th := m.cfg.Theme
+	base := m.styles.Status
 
-	left := m.statusLeft()
-	right := m.statusRight()
+	chip := func(s, bg string) string {
+		st := base.Bold(true)
+		if strings.TrimSpace(bg) != "" {
+			st = st.Background(lipgloss.Color(bg)).Foreground(lipgloss.Color(textOn(bg)))
+		}
+		return st.Render(" " + s + " ")
+	}
+	seg := func(s, fg string) string {
+		st := base
+		if strings.TrimSpace(fg) != "" {
+			st = st.Foreground(lipgloss.Color(fg))
+		}
+		return st.Render(s)
+	}
+	sp := base.Render("  ")
 
+	left := chip("passer", th.Accent) + base.Render(" ") + chip(m.modeLabel(), th.StatusAltBg)
+	if m.detailOpen() {
+		left += sp + seg(m.entry.Name, th.Heading)
+	} else {
+		cur := 0
+		if len(m.matches) > 0 {
+			cur = m.cursor + 1
+		}
+		left += sp + seg(fmt.Sprintf("%d/%d", cur, len(m.matches)), th.Success)
+		if m.query != "" {
+			left += sp + seg("filter:", th.Muted) + seg(strconv.Quote(m.query), th.Warning)
+		}
+	}
+	switch {
+	case m.loading != "":
+		left += sp + seg("decrypting "+m.loading+"…", th.Warning)
+	case m.status != "" && m.statusErr:
+		left += sp + seg(m.status, th.Danger)
+	case m.status != "":
+		left += sp + seg(m.status, "")
+	}
+
+	right := m.statusRight(seg, sp)
+	room := width - lipgloss.Width(right)
+	if lipgloss.Width(left) > room {
+		left = truncateANSI(left, room)
+	}
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		left = truncateANSI(left, width-lipgloss.Width(right)-1)
-		gap = width - lipgloss.Width(left) - lipgloss.Width(right)
-		if gap < 0 {
-			gap = 0
-		}
+	if gap < 0 {
+		gap = 0
 	}
-
-	line := left + strings.Repeat(" ", gap) + right
-	return stripeLine(m.styles.Status, padTo(line, width))
+	return stripeLine(base, left+base.Render(strings.Repeat(" ", gap))+right)
 }
 
-func (m Model) statusLeft() string {
-	if m.loading != "" {
-		return " decrypting " + m.loading + "…"
+func (m Model) modeLabel() string {
+	switch m.mode {
+	case modeSearch:
+		return "SEARCH"
+	case modeCommand:
+		return "COMMAND"
+	case modeRename:
+		return "RENAME"
+	case modeConfirmDelete:
+		return "DELETE"
+	case modeAdd:
+		return "ADD"
+	case modeHelp:
+		return "HELP"
+	case modeDetail:
+		return "ENTRY"
 	}
-	if m.status != "" {
-		if m.statusErr {
-			return " " + m.styles.Danger.Render(m.status)
-		}
-		return " " + m.status
-	}
-	if m.mode == modeDetail && m.entry != nil {
-		return " " + m.entry.Name
-	}
-	return " " + shortenPath(m.store.Dir())
+	return "LIST"
 }
 
-// statusRight shows the live countdowns. They are the only way to know how long
-// a secret stays exposed, so they sit in a fixed spot rather than in the
-// transient status message.
-func (m Model) statusRight() string {
+// statusRight shows the live countdowns.
+func (m Model) statusRight(seg func(s, fg string) string, sp string) string {
+	th := m.cfg.Theme
 	var parts []string
 	if m.clipLeft > 0 {
-		parts = append(parts, fmt.Sprintf("📋 %s %ds", m.clipLabel, m.clipLeft))
+		parts = append(parts, seg(fmt.Sprintf("clipboard: %s %ds", m.clipLabel, m.clipLeft), th.Warning))
 	}
 	if m.revealed {
 		if m.revealLeft > 0 {
-			parts = append(parts, fmt.Sprintf("👁 %ds", m.revealLeft))
+			parts = append(parts, seg(fmt.Sprintf("revealed %ds", m.revealLeft), th.Danger))
 		} else {
-			parts = append(parts, "👁 shown")
+			parts = append(parts, seg("revealed", th.Danger))
 		}
 	}
 	if len(parts) == 0 {
-		return " "
+		return ""
 	}
-	return strings.Join(parts, "  ") + " "
+	return strings.Join(parts, sp) + seg(" ", "")
+}
+
+// textOn picks near-black or white text for a hex background, whichever reads
+// better. Presets put both pale and saturated colors behind badges (dark's
+// accent is a light yellow), so a fixed text color fails on one or the other.
+func textOn(bg string) string {
+	hex := strings.TrimPrefix(strings.TrimSpace(bg), "#")
+	if len(hex) != 6 {
+		return "#FFFFFF"
+	}
+	v, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return "#FFFFFF"
+	}
+	r, g, b := float64(v>>16&0xFF), float64(v>>8&0xFF), float64(v&0xFF)
+	// Perceived brightness (ITU-R BT.601 weights) is enough to pick a side.
+	if 0.299*r+0.587*g+0.114*b > 150 {
+		return "#0F172A"
+	}
+	return "#FFFFFF"
+}
+
+func (m Model) storeDir() string {
+	if m.store == nil {
+		return ""
+	}
+	return m.store.Dir()
 }
 
 // ---------------------------------------------------------------------------

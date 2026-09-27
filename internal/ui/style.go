@@ -67,6 +67,11 @@ func (m Model) panelTop(title string, inner int) string {
 	if title == "" {
 		return bs.Render("╭" + strings.Repeat("─", inner) + "╮")
 	}
+	// Keep the tail of an over-long title: for a store path or entry name, the
+	// end is the part that identifies it.
+	if runes := []rune(title); len(runes) > inner-4 && inner > 5 {
+		title = "…" + string(runes[len(runes)-(inner-5):])
+	}
 	label := m.styles.PanelTitle.Render(title)
 	midDashes := inner - 3 - lipgloss.Width(label)
 	if midDashes < 0 {
