@@ -59,12 +59,26 @@ remove() {
 remove "${TARGET}"
 remove "${ROOT_DIR}/bin/${BIN_NAME}"
 
-# Clear stale copies elsewhere on PATH, the usual cause of "it's still here".
+# Other copies elsewhere on PATH are the usual cause of "it's still here", but
+# a file that merely shares the name isn't necessarily ours, so each one is
+# confirmed rather than deleted outright.
+declare -a SEEN=()
 while true; do
-  RESOLVED="$(command -v "${BIN_NAME}" 2>/dev/null || true)"
-  [[ -n "${RESOLVED}" ]] || break
-  remove "${RESOLVED}"
   hash -r 2>/dev/null || true
+  RESOLVED="$(type -P "${BIN_NAME}" 2>/dev/null || true)"
+  [[ -n "${RESOLVED}" && -f "${RESOLVED}" ]] || break
+  # Stop if a declined or failed removal leaves the same file resolving.
+  for seen in "${SEEN[@]+"${SEEN[@]}"}"; do
+    [[ "${seen}" == "${RESOLVED}" ]] && break 2
+  done
+  SEEN+=("${RESOLVED}")
+
+  if [[ -t 0 ]]; then
+    read -r -p "Another '${BIN_NAME}' is on your PATH at ${RESOLVED}. Remove it? [y/N] " reply
+    [[ "${reply}" =~ ^[Yy]$ ]] && remove "${RESOLVED}"
+  else
+    echo "NOTE: another '${BIN_NAME}' remains at ${RESOLVED}; remove it by hand if it is a stale passer." >&2
+  fi
 done
 
 if [[ "${PURGE}" -eq 1 ]]; then

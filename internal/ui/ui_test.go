@@ -232,3 +232,74 @@ func TestHumanTime(t *testing.T) {
 		t.Errorf("humanTime(2001) = %q, want a full date", got)
 	}
 }
+
+func TestDetailRowsMasksOTPAuthURI(t *testing.T) {
+	// pass-otp's on-disk format: a bare URI whose query carries the seed.
+	entry := pass.ParseEntry("x", "pw\notpauth://totp/GitHub:han?secret=JBSWY3DPEHPK3PXP\n")
+	m := testModel()
+	m.entry = &entry
+
+	rows := m.detailRows()
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want password plus the otp URI", rows)
+	}
+	if !rows[1].secret {
+		t.Errorf("otpauth URI row %+v is not masked; it contains the TOTP seed", rows[1])
+	}
+}
+
+func TestClearOnExitWipesAPendingSecret(t *testing.T) {
+	m := testModel()
+	m.clipValue = "hunter2"
+
+	var cleared []string
+	record := func(expect string) error { cleared = append(cleared, expect); return nil }
+
+	if err := clearOnExit(m, record); err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared) != 1 || cleared[0] != "hunter2" {
+		t.Errorf("cleared = %q, want the pending secret wiped once", cleared)
+	}
+
+	// Nothing pending (never copied, already cleared, or auto-clear disabled).
+	cleared = nil
+	if err := clearOnExit(testModel(), record); err != nil || len(cleared) != 0 {
+		t.Errorf("cleared = %q, err = %v; want no clipboard access", cleared, err)
+	}
+	if err := clearOnExit(nil, record); err != nil || len(cleared) != 0 {
+		t.Errorf("a failed run must not touch the clipboard: cleared = %q, err = %v", cleared, err)
+	}
+}
+
+func TestStaleOpenDoesNotLeaveADialog(t *testing.T) {
+	m := testModel("a")
+	m.mode = modeAdd
+	m.add = &addState{}
+
+	next, _ := m.Update(entryLoadedMsg{name: "a", entry: pass.Entry{Name: "a", Password: "pw"}, intent: intentOpen})
+	got := next.(Model)
+	if got.mode != modeAdd || got.entry != nil {
+		t.Errorf("mode = %v, entry = %v; a late decrypt must not replace the add dialog", got.mode, got.entry)
+	}
+}
+
+func TestStaleRefreshDoesNotReopenAClosedEntry(t *testing.T) {
+	m := testModel("a")
+	m.mode = modeList // the user closed the entry while `pass edit` was saving
+
+	next, _ := m.Update(entryLoadedMsg{name: "a", entry: pass.Entry{Name: "a", Password: "pw"}, intent: intentRefresh})
+	got := next.(Model)
+	if got.mode != modeList || got.entry != nil {
+		t.Errorf("mode = %v, entry = %v; a refresh must not bring plaintext back", got.mode, got.entry)
+	}
+}
+
+func TestOpenShowsTheEntry(t *testing.T) {
+	m := testModel("a")
+	next, _ := m.Update(entryLoadedMsg{name: "a", entry: pass.Entry{Name: "a", Password: "pw"}, intent: intentOpen})
+	got := next.(Model)
+	if got.mode != modeDetail || got.entry == nil || got.entry.Name != "a" {
+		t.Errorf("mode = %v, entry = %v; want the detail view for a", got.mode, got.entry)
+	}
+}

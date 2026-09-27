@@ -899,7 +899,7 @@ func (m Model) applyTheme(name string) (tea.Model, tea.Cmd) {
 	}
 	m.cfg.Theme = theme
 	m.styles = buildStyles(theme)
-	if err := config.Save(m.configPath, m.cfg); err != nil {
+	if err := config.SaveThemePreset(m.configPath, theme.Preset); err != nil {
 		m.status, m.statusErr = "theme applied but not saved: "+err.Error(), true
 		return m, nil
 	}
@@ -949,6 +949,12 @@ func (m Model) detailRows() []detailRow {
 		if strings.TrimSpace(note) == "" {
 			continue
 		}
+		// pass-otp stores its seed as a bare otpauth:// URI, which the field
+		// parser rightly treats as a note — but it carries the TOTP secret.
+		if isOTPURI(note) {
+			rows = append(rows, detailRow{label: "otp", value: note, secret: true})
+			continue
+		}
 		rows = append(rows, detailRow{label: fmt.Sprintf("note %d", i+1), value: note})
 	}
 	return rows
@@ -957,6 +963,10 @@ func (m Model) detailRows() []detailRow {
 // secretFieldKeys are field names whose values are masked alongside the
 // password.
 var secretFieldKeys = []string{"otp", "totp", "otpauth", "secret", "token", "pin", "recovery", "seed", "key"}
+
+func isOTPURI(line string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "otpauth://")
+}
 
 func isSecretField(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))

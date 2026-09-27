@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -186,5 +187,65 @@ func TestSaveRoundTrips(t *testing.T) {
 	}
 	if got.Generate.Length != 40 {
 		t.Errorf("Length = %d after a round trip, want 40", got.Generate.Length)
+	}
+}
+
+func TestSaveThemePresetKeepsTheRestOfTheFile(t *testing.T) {
+	example, err := os.ReadFile(filepath.Join("..", "..", "config.example.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Replace(string(example), "clip_clear_seconds = 45", "clip_clear_seconds = 10", 1)
+	path := writeConfig(t, body)
+
+	if err := SaveThemePreset(path, "ocean"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+
+	themeAt := strings.Index(body, "[theme]")
+	if !strings.HasPrefix(out, body[:themeAt]) {
+		t.Error("everything before [theme], comments included, must be kept byte for byte")
+	}
+	cfg, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := PresetTheme("ocean")
+	if cfg.Theme != want {
+		t.Errorf("theme = %+v, want the pure ocean preset with no stale light overrides", cfg.Theme)
+	}
+	if cfg.Security.ClipClearSeconds != 10 {
+		t.Errorf("ClipClearSeconds = %d, want the value edited on disk kept", cfg.Security.ClipClearSeconds)
+	}
+}
+
+func TestSaveThemePresetKeepsLaterTables(t *testing.T) {
+	path := writeConfig(t, "[theme]\npreset = 'light'\naccent = '#000000'\n\n# keys follow\n[keys]\nquit = 'x'\n")
+	if err := SaveThemePreset(path, "dark"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	want := "[theme]\npreset = 'dark'\n\n# keys follow\n[keys]\nquit = 'x'\n"
+	if string(data) != want {
+		t.Errorf("file =\n%s\nwant\n%s", data, want)
+	}
+}
+
+func TestSaveThemePresetAppendsAMissingTable(t *testing.T) {
+	path := writeConfig(t, "store_dir = ''")
+	if err := SaveThemePreset(path, "rose"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme.Preset != "rose" {
+		t.Errorf("preset = %q, want rose", cfg.Theme.Preset)
 	}
 }

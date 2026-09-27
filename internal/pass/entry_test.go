@@ -147,7 +147,7 @@ func TestValidateName(t *testing.T) {
 		}
 	}
 
-	invalid := []string{"", "   ", "-rf", "/etc/passwd", "../escape", "web/../../etc/x", "nul\x00byte"}
+	invalid := []string{"", "   ", "-rf", "/etc/passwd", "../escape", "web/../../etc/x", "nul\x00byte", " -rf", "trailing ", "\tgithub"}
 	for _, name := range invalid {
 		if err := ValidateName(name); err == nil {
 			t.Errorf("ValidateName(%q) = nil, want an error", name)

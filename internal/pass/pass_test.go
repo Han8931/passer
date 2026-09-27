@@ -3,6 +3,7 @@ package pass
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -116,4 +117,18 @@ func exists(t *testing.T) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func TestMoveRefusesAnExistingFolder(t *testing.T) {
+	// pass mv would turn "github -> web" into web/github, overwriting the
+	// entry already there. The guard must fire before pass is ever run.
+	s := newTestStore(t, "github", "web/github")
+	s.bin = filepath.Join(t.TempDir(), "pass-must-not-run")
+
+	for _, dest := range []string{"web", "web/"} {
+		err := s.Move("github", dest)
+		if err == nil || !strings.Contains(err.Error(), "is a folder") {
+			t.Errorf("Move(github, %q) = %v, want a folder error", dest, err)
+		}
+	}
 }

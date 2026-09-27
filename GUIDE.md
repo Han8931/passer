@@ -188,7 +188,9 @@ same one `pass` uses: `[:alnum:]`, plus `[:punct:]` unless you set
   entry if it is still on screen. This is the way to edit fields passer's add
   dialog doesn't cover.
 - `m` — rename / move. `pass mv` re-encrypts the entry if the destination sits
-  under a different `.gpg-id`. Refuses to clobber an existing name.
+  under a different `.gpg-id`. Refuses to clobber an existing name, and
+  refuses a destination that is a folder — give the full path instead
+  (`web/github`, not `web`).
 - `D` — delete, with a confirmation line. `y` confirms; any other key cancels.
 
 After a rename or an add, the cursor follows the entry you just touched rather
@@ -266,6 +268,11 @@ Passer ships the same seven palettes as [bada](https://github.com/Han8931/bada):
   switch. The change applies immediately and is saved to your config.
 - **Cycle live** — press `t` to rotate through the presets, applied and saved as
   you go.
+
+Switching this way rewrites only the `[theme]` table of your config, replacing
+it with the new `preset` line; the rest of the file, comments included, is
+left as it is. Any color overrides in `[theme]` are dropped with the old
+palette.
 - **Hand-tune** — set `preset` in `[theme]` and override individual keys. Any
   color you set wins over the preset, so you can start from `ocean` and adjust a
   single hue.
@@ -322,8 +329,9 @@ go test ./...
 ./uninstall.sh
 ```
 
-Removes the installed binary, the local build artifact, and any other `passer`
-copies found on your `PATH`. Use the same `--prefix`/`--bin-name` you installed
+Removes the installed binary and the local build artifact. If another
+`passer` is still on your `PATH`, it asks before removing each one (run
+non-interactively, it just reports them). Use the same `--prefix`/`--bin-name` you installed
 with. To also delete the config:
 
 ```bash

@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,6 +123,127 @@ func LoadOrCreate(path string) (Config, error) {
 }
 
 func Save(path string, cfg Config) error { return write(path, cfg) }
+
+// SaveThemePreset records a theme choice by rewriting only the [theme] table.
+//
+// Re-marshalling the whole Config would strip every comment from a
+// hand-edited file and clobber anything changed on disk since passer started.
+// The [theme] table is replaced wholesale, not just its preset key, because
+// color overrides left behind would mask the preset the user just picked.
+func SaveThemePreset(path, preset string) error {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		cfg := defaultConfig()
+		cfg.Theme, _ = PresetTheme(preset)
+		return write(path, cfg)
+	}
+	if err != nil {
+		return err
+	}
+
+	updated := replaceThemeTable(string(data), preset)
+	// Never write a file passer itself can't read back.
+	var check Config
+	if err := toml.Unmarshal([]byte(updated), &check); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, []byte(updated))
+}
+
+// replaceThemeTable swaps the body of the [theme] table for a single preset
+// line, appending the table if the file has none. Comments directly above the
+// next table header belong to that table and are kept.
+func replaceThemeTable(src, preset string) string {
+	body := fmt.Sprintf("preset = '%s'\n", preset)
+	lines := strings.SplitAfter(src, "\n")
+
+	start := -1
+	for i, line := range lines {
+		if isTableHeader(line) && tableName(line) == "theme" {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		if src != "" && !strings.HasSuffix(src, "\n") {
+			src += "\n"
+		}
+		return src + "\n[theme]\n" + body
+	}
+
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if isTableHeader(lines[i]) {
+			end = i
+			break
+		}
+	}
+	keep := end
+	if end < len(lines) {
+		for keep > start+1 {
+			t := strings.TrimSpace(lines[keep-1])
+			if t != "" && !strings.HasPrefix(t, "#") {
+				break
+			}
+			keep--
+		}
+		// One blank line separates the tables; drop the ones already there.
+		for keep < end && strings.TrimSpace(lines[keep]) == "" {
+			keep++
+		}
+	}
+
+	var b strings.Builder
+	for _, line := range lines[:start+1] {
+		b.WriteString(line)
+	}
+	if !strings.HasSuffix(lines[start], "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString(body)
+	if end < len(lines) {
+		b.WriteString("\n")
+	}
+	for _, line := range lines[keep:] {
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+func isTableHeader(line string) bool {
+	t := strings.TrimSpace(line)
+	return strings.HasPrefix(t, "[")
+}
+
+func tableName(line string) string {
+	t := strings.TrimSpace(line)
+	if i := strings.Index(t, "#"); i >= 0 {
+		t = strings.TrimSpace(t[:i])
+	}
+	return strings.TrimSpace(strings.Trim(t, "[]"))
+}
+
+// writeFileAtomic replaces path via a temp file and rename, so a crash midway
+// leaves the old config rather than half of a new one.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.toml")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
 
 // ThemePresetNames lists the built-in palettes in display order. It is the
 // single source of truth for the names the :theme command offers.

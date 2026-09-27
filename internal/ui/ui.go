@@ -200,8 +200,23 @@ func Run(store *pass.Store, board clip.Backend, clipErr error, cfg config.Config
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
+	final, err := p.Run()
+	if clearErr := clearOnExit(final, board.ClearIfUnchanged); clearErr != nil && err == nil {
+		err = fmt.Errorf("clearing clipboard on exit: %w", clearErr)
+	}
 	return err
+}
+
+// clearOnExit wipes a copied secret whose auto-clear timer was still running
+// when passer quit. The timer lives in this process, so without this, copying a
+// password and quitting — the most common way to use a copy — would leave it on
+// the clipboard indefinitely.
+func clearOnExit(final tea.Model, clear func(expect string) error) error {
+	m, ok := final.(Model)
+	if !ok || m.clipValue == "" {
+		return nil
+	}
+	return clear(m.clipValue)
 }
 
 func (m Model) Init() tea.Cmd { return loadItemsCmd(m.store) }
@@ -395,6 +410,20 @@ func (m Model) onEntryLoaded(msg entryLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.status, m.statusErr = msg.err.Error(), true
 		return m, nil
+	}
+
+	// Decryption can sit on a pinentry prompt for a long time. If the user has
+	// moved on meanwhile — opened a dialog, or closed the entry being refreshed
+	// — the result must not yank them back into the detail view.
+	switch msg.intent {
+	case intentOpen:
+		if m.mode != modeList {
+			return m, nil
+		}
+	case intentRefresh:
+		if m.mode != modeDetail || m.entry == nil || m.entry.Name != msg.name {
+			return m, nil
+		}
 	}
 
 	switch msg.intent {

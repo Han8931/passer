@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -188,6 +189,12 @@ func (s *Store) Move(oldName, newName string) error {
 	if s.Exists(newName) {
 		return fmt.Errorf("%s already exists", newName)
 	}
+	// `pass mv` treats an existing directory as "move into it", so renaming
+	// github to web would really produce web/github — and with --force, replace
+	// a web/github that was already there. Refuse instead of guessing.
+	if info, err := os.Stat(filepath.Join(s.dir, filepath.FromSlash(newName))); err == nil && info.IsDir() {
+		return fmt.Errorf("%s is a folder; give the full new name, e.g. %s/%s", newName, strings.TrimSuffix(newName, "/"), path.Base(oldName))
+	}
 	_, err := s.run(nil, "mv", "--force", "--", oldName, newName)
 	return err
 }
@@ -238,10 +245,15 @@ func (s *Store) env() []string {
 // "..", absolute paths, and leading dashes are the cases that matter — the
 // latter because a name beginning with "-" would otherwise be read as a flag
 // (we also pass "--" at every call site as a second line of defence).
+//
+// Surrounding whitespace is rejected rather than trimmed: callers pass the name
+// on to pass untouched, so the string we check must be the string we use.
 func validateName(name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
+	if strings.TrimSpace(name) == "" {
 		return errors.New("entry name is empty")
+	}
+	if strings.TrimSpace(name) != name {
+		return errors.New("entry name may not start or end with whitespace")
 	}
 	if strings.HasPrefix(name, "-") {
 		return errors.New("entry name may not start with '-'")
