@@ -17,6 +17,7 @@ project overview, see the [README](README.md).
 - [Configuration](#configuration)
 - [Install (Linux)](#install-linux)
 - [Uninstall (Linux)](#uninstall-linux)
+- [Testing](#testing)
 
 ## Quick Start
 
@@ -340,3 +341,19 @@ with. To also delete the config:
 
 **Your password store is never touched.** It belongs to `pass`; uninstalling
 passer just removes the front end.
+
+## Testing
+
+```bash
+go test ./...          # unit tests; nothing here decrypts
+scripts/sandbox.sh     # run passer against a throwaway key and store
+```
+
+The sandbox creates a temporary GPG key (no passphrase), a password store
+seeded with sample entries, and its own config, then starts passer from the
+current sources. Your real store, keyring, and `~/.config/passer` are never
+touched, and everything is deleted when passer exits. The clipboard is the real
+one, so copy tests behave as they do in daily use.
+
+- `scripts/sandbox.sh pass ls` runs any command inside the sandbox instead.
+- `--keep` leaves the sandbox in place and prints the variables to reuse it.
