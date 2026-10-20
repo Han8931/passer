@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -199,25 +200,101 @@ func (s *Store) Move(oldName, newName string) error {
 	return err
 }
 
+// ErrUnchanged reports a `pass edit` that ended without changes. pass exits
+// non-zero for it, but for the user it is an outcome, not a failure.
+var ErrUnchanged = errors.New("no changes")
+
 // EditCmd builds the `pass edit` invocation for an entry.
 //
 // It is returned rather than run because `pass edit` hands the terminal to
 // $EDITOR: the caller must suspend the TUI around it, the same way bada
 // suspends around `:config`.
-func (s *Store) EditCmd(name string) (*exec.Cmd, error) {
+//
+// finish must be called with the command's exit error once it has run. It
+// turns the exit into pass's own message: pass writes it to stderr, which
+// would otherwise land on the alternate screen the TUI is about to repaint,
+// leaving nothing but "exit status 1". stderr goes to a temporary file, not a
+// pipe, for the reason given in clip.Copy: gpg may leave gpg-agent running with
+// the write end open, and waiting for a pipe to drain would hang the edit.
+func (s *Store) EditCmd(name string) (cmd *exec.Cmd, finish func(error) error, err error) {
 	if err := validateName(name); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	cmd := exec.Command(s.bin, "edit", "--", name)
+	// No "--" here, unlike every other call site: cmd_edit takes exactly one
+	// argument and doesn't parse options, so it would read "--" as the name and
+	// die with a usage error. validateName's leading-dash rule is what keeps the
+	// name from being taken as a flag.
+	cmd = exec.Command(s.bin, "edit", name)
 	cmd.Env = s.env()
-	return cmd, nil
+
+	errFile, tmpErr := os.CreateTemp("", "passer-edit-*.err")
+	if tmpErr != nil {
+		// Without a file, pass's message goes to the terminal as it always did.
+		return cmd, func(runErr error) error { return runErr }, nil
+	}
+	cmd.Stderr = errFile
+	finish = func(runErr error) error {
+		defer os.Remove(errFile.Name())
+		defer errFile.Close()
+		if runErr == nil {
+			return nil
+		}
+		return editError(runErr, readAll(errFile))
+	}
+	return cmd, finish, nil
 }
+
+// editError picks the message that explains a failed `pass edit`. See lastLine
+// for why it is the last line.
+func editError(runErr error, stderr string) error {
+	msg := lastLine(stderr)
+	switch {
+	case msg == "Password unchanged.":
+		return ErrUnchanged
+	case msg != "":
+		return errors.New(msg)
+	}
+	return runErr
+}
+
+func readAll(f *os.File) string {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return ""
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// lastLine returns the line of pass's stderr that explains a failure. pass and
+// gpg die with their reason after whatever warnings came first — macOS's
+// hdiutil deprecation notice, gpg's "unsafe permissions on homedir" — so the
+// first line is usually noise and the last is the cause.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// pipeDrainDelay bounds how long run waits for pass's output pipes to close
+// after pass itself has exited.
+const pipeDrainDelay = 2 * time.Second
 
 // run executes pass and returns stdout, folding stderr into the error so the
 // UI can show pass's own diagnostics instead of "exit status 1".
+//
+// Output is captured through pipes, which carries the hazard described at
+// EditCmd: a gpg-agent that gpg spawned can inherit the write ends and hold
+// them open long after pass exits. EditCmd sidesteps it with a temporary file,
+// but stdout here carries decrypted plaintext, which must never touch disk. So
+// we keep the pipes and set WaitDelay instead: once pass has exited, Wait
+// collects what is already buffered — pass writes everything before exiting —
+// and then closes the pipes rather than waiting for EOF.
 func (s *Store) run(stdin *strings.Reader, args ...string) (string, error) {
 	cmd := exec.Command(s.bin, args...)
 	cmd.Env = s.env()
+	cmd.WaitDelay = pipeDrainDelay
 	if stdin != nil {
 		cmd.Stdin = stdin
 	}
@@ -225,9 +302,11 @@ func (s *Store) run(stdin *strings.Reader, args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return "", errors.New(firstLine(msg))
+	// ErrWaitDelay means pass exited cleanly and only a straggler was holding
+	// a pipe; the output is complete.
+	if err := cmd.Run(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
+		if msg := lastLine(stderr.String()); msg != "" {
+			return "", errors.New(msg)
 		}
 		return "", err
 	}
@@ -244,7 +323,8 @@ func (s *Store) env() []string {
 // shell-facing tool. pass takes names as paths relative to the store root, so
 // "..", absolute paths, and leading dashes are the cases that matter — the
 // latter because a name beginning with "-" would otherwise be read as a flag
-// (we also pass "--" at every call site as a second line of defence).
+// (we also pass "--" as a second line of defence wherever pass accepts it,
+// which is everywhere except `pass edit`).
 //
 // Surrounding whitespace is rejected rather than trimmed: callers pass the name
 // on to pass untouched, so the string we check must be the string we use.
@@ -275,13 +355,6 @@ func validateName(name string) error {
 // ValidateName exposes the name rules to the UI so a bad name is reported in
 // the add/rename dialog rather than after a failed command.
 func ValidateName(name string) error { return validateName(name) }
-
-func firstLine(s string) string {
-	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
-		return strings.TrimSpace(s[:idx])
-	}
-	return s
-}
 
 func expandHome(path string) string {
 	if path == "~" || strings.HasPrefix(path, "~/") {

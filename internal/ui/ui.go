@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -309,12 +310,12 @@ func moveCmd(store *pass.Store, from, to string) tea.Cmd {
 
 // editCmd suspends the TUI so `pass edit` can hand the terminal to $EDITOR.
 func editCmd(store *pass.Store, name string) tea.Cmd {
-	cmd, err := store.EditCmd(name)
+	cmd, finish, err := store.EditCmd(name)
 	if err != nil {
 		return func() tea.Msg { return editDoneMsg{name: name, err: err} }
 	}
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return editDoneMsg{name: name, err: err}
+		return editDoneMsg{name: name, err: finish(err)}
 	})
 }
 
@@ -379,6 +380,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onWriteDone(msg)
 
 	case editDoneMsg:
+		if errors.Is(msg.err, pass.ErrUnchanged) {
+			m.status, m.statusErr = msg.name+" unchanged", false
+			return m, nil
+		}
 		if msg.err != nil {
 			m.status, m.statusErr = "edit failed: "+msg.err.Error(), true
 			return m, nil
