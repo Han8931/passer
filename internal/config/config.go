@@ -44,6 +44,8 @@ type Theme struct {
 	// Preset names a built-in palette. When set, it provides the base colors;
 	// any other field left non-empty overrides that base.
 	Preset      string `toml:"preset"`
+	Background  string `toml:"background"`
+	Foreground  string `toml:"foreground"`
 	Title       string `toml:"title"`
 	Heading     string `toml:"heading"`
 	Accent      string `toml:"accent"`
@@ -262,14 +264,16 @@ func PresetTheme(name string) (Theme, bool) {
 	case "dark", "slate", "dark-slate":
 		return Theme{
 			Preset:      "dark",
+			Background:  "#0F172A",
+			Foreground:  "#E2E8F0",
 			Title:       "#8AB4F8",
 			Heading:     "#7DD3FC",
-			Accent:      "#F2CC60",
-			Muted:       "#8B949E",
+			Accent:      "#93C5FD",
+			Muted:       "#A8B5C7",
 			Success:     "#3FB950",
 			Warning:     "#D29922",
 			Danger:      "#F85149",
-			Border:      "#30363D",
+			Border:      "#64748B",
 			SelectionBg: "#264F78",
 			SelectionFg: "#F0F6FC",
 			StatusBg:    "#161B22",
@@ -281,6 +285,8 @@ func PresetTheme(name string) (Theme, bool) {
 	case "purple", "violet", "amethyst":
 		return Theme{
 			Preset:      "purple",
+			Background:  "#181525",
+			Foreground:  "#EDE9FE",
 			Title:       "#C4B5FD",
 			Heading:     "#DDD6FE",
 			Accent:      "#F0ABFC",
@@ -300,6 +306,8 @@ func PresetTheme(name string) (Theme, bool) {
 	case "ocean", "marine", "aqua":
 		return Theme{
 			Preset:      "ocean",
+			Background:  "#0B202E",
+			Foreground:  "#E0F2FE",
 			Title:       "#67E8F9",
 			Heading:     "#5EEAD4",
 			Accent:      "#38BDF8",
@@ -319,6 +327,8 @@ func PresetTheme(name string) (Theme, bool) {
 	case "forest", "evergreen", "green":
 		return Theme{
 			Preset:      "forest",
+			Background:  "#142019",
+			Foreground:  "#ECFDF5",
 			Title:       "#BBF7D0",
 			Heading:     "#86EFAC",
 			Accent:      "#FACC15",
@@ -338,6 +348,8 @@ func PresetTheme(name string) (Theme, bool) {
 	case "rose", "blush", "magenta":
 		return Theme{
 			Preset:      "rose",
+			Background:  "#23171D",
+			Foreground:  "#FFF1F2",
 			Title:       "#FDA4AF",
 			Heading:     "#F9A8D4",
 			Accent:      "#FBBF24",
@@ -357,8 +369,10 @@ func PresetTheme(name string) (Theme, bool) {
 	case "graphite", "mono", "neutral":
 		return Theme{
 			Preset:      "graphite",
+			Background:  "#18181B",
+			Foreground:  "#F4F4F5",
 			Title:       "#E5E7EB",
-			Heading:     "#CBD5E1",
+			Heading:     "#94A3B8",
 			Accent:      "#A3E635",
 			Muted:       "#9CA3AF",
 			Success:     "#84CC16",
@@ -400,6 +414,8 @@ func overlayTheme(dst *Theme, src Theme) {
 			*d = s
 		}
 	}
+	set(&dst.Background, src.Background)
+	set(&dst.Foreground, src.Foreground)
 	set(&dst.Title, src.Title)
 	set(&dst.Heading, src.Heading)
 	set(&dst.Accent, src.Accent)
@@ -523,20 +539,22 @@ func defaultConfig() Config {
 		},
 		Theme: Theme{
 			Preset:      "light",
+			Background:  "#F8FAFC",
+			Foreground:  "#0F172A",
 			Title:       "#2563EB",
 			Heading:     "#0F766E",
-			Accent:      "#D97706",
-			Muted:       "#64748B",
-			Success:     "#16A34A",
+			Accent:      "#1D4ED8",
+			Muted:       "#475569",
+			Success:     "#15803D",
 			Warning:     "#B45309",
 			Danger:      "#DC2626",
-			Border:      "#CBD5E1",
+			Border:      "#94A3B8",
 			SelectionBg: "#DBEAFE",
 			SelectionFg: "#0F172A",
 			StatusBg:    "#E2E8F0",
 			StatusFg:    "#0F172A",
-			StatusAltBg: "#0F766E",
-			StatusAltFg: "#F8FAFC",
+			StatusAltBg: "#E2E8F0",
+			StatusAltFg: "#334155",
 			RowStripeBg: "#F1F5F9",
 		},
 	}

@@ -86,18 +86,20 @@ theme_toggle = 't'    # cycle palettes, applied and saved immediately
 # can start from a palette and adjust a single hue.
 preset = 'light'
 
+background = '#F8FAFC'    # full terminal canvas
+foreground = '#0F172A'    # entry names, values, and input text
 title = '#2563EB'          # panel titles and section headings
 heading = '#0F766E'        # field labels
-accent = '#D97706'         # cursor, panel title text, fuzzy-match highlights
-muted = '#64748B'          # folder prefixes, masked values, secondary text
-success = '#16A34A'
+accent = '#1D4ED8'         # cursor, panel title text, fuzzy-match highlights
+muted = '#475569'          # folder prefixes, masked values, secondary text
+success = '#15803D'
 warning = '#B45309'        # revealed secrets are drawn in this color
 danger = '#DC2626'         # errors and delete confirmations
-border = '#CBD5E1'         # rounded panel frames
+border = '#94A3B8'         # rounded panel frames
 selection_bg = '#DBEAFE'   # highlighted row
 selection_fg = '#0F172A'
 status_bg = '#E2E8F0'      # status bar
 status_fg = '#0F172A'
-status_alt_bg = '#0F766E'  # table header bar and key-hint chips
-status_alt_fg = '#F8FAFC'
+status_alt_bg = '#E2E8F0'  # table header bar and key-hint chips
+status_alt_fg = '#334155'
 row_stripe_bg = '#F1F5F9'  # kept for bada compatibility; the list no longer stripes rows

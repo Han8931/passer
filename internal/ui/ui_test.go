@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
 	"passer/internal/config"
 	"passer/internal/pass"
 )
@@ -400,5 +403,44 @@ func TestOpenShowsTheEntry(t *testing.T) {
 	got := next.(Model)
 	if got.mode != modeDetail || got.entry == nil || got.entry.Name != "a" {
 		t.Errorf("mode = %v, entry = %v; want the detail view for a", got.mode, got.entry)
+	}
+}
+
+// Exercise ANSI output: plain-text snapshots cannot detect conflicting colors.
+func TestThemeCanvasAndSelectedSearchContrast(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+	for _, name := range config.ThemePresetNames() {
+		t.Run(name, func(t *testing.T) {
+			theme, _ := config.PresetTheme(name)
+			m := testModel("web/github")
+			m.cfg.Theme = theme
+			m.styles = buildStyles(theme)
+			m.query = "git"
+			m.applyFilter()
+			row, _ := m.renderListRow(0, m.listColumns(), m.panelInnerWidth(), false, "")
+			// Search hits keep the selection foreground instead of restoring the accent.
+			accent := bgOpenSeq(m.styles.Accent)
+			if accent != "" && strings.Contains(row, accent) {
+				t.Fatal("selected search result contains the normal accent color")
+			}
+			if !strings.Contains(row, bgOpenSeq(m.styles.Selection)) {
+				t.Fatal("selected row has no selection colors")
+			}
+			view := m.View()
+			lines := strings.Split(view, "\n")
+			if len(lines) != m.height {
+				t.Fatalf("height = %d, want %d", len(lines), m.height)
+			}
+			for _, line := range lines {
+				if lipgloss.Width(line) != m.width-2 {
+					t.Fatalf("line width = %d", lipgloss.Width(line))
+				}
+				if !strings.Contains(line, bgOpenSeq(m.styles.Base)) {
+					t.Fatal("canvas colors missing")
+				}
+			}
+		})
 	}
 }

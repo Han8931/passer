@@ -29,6 +29,15 @@ func buildStyles(theme config.Theme) uiStyles {
 		StatusAlt: lipgloss.NewStyle(),
 	}
 
+	// Explicit canvas colors keep palettes readable on either terminal theme.
+	background, foreground := theme.Background, theme.Foreground
+	if background == "" {
+		background = theme.StatusBg
+	}
+	if foreground == "" {
+		foreground = theme.StatusFg
+	}
+	styles.Base = applyFg(applyBg(lipgloss.NewStyle(), background), foreground)
 	styles.Title = applyFg(styles.Title, theme.Title)
 	styles.Heading = applyFg(styles.Heading, theme.Heading)
 	styles.Accent = applyFg(styles.Accent, theme.Accent)

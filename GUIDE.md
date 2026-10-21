@@ -270,7 +270,7 @@ when you copy, rather than implying a timer that will never fire.
 
 ## Theme
 
-Passer ships the same seven palettes as [bada](https://github.com/Han8931/bada):
+Passer ships seven palettes with explicit canvas and text colors:
 **light** (default), **dark**, **purple**, **ocean**, **forest**, **rose**, and
 **graphite**. There are three ways to switch:
 
@@ -287,7 +287,13 @@ palette.
   color you set wins over the preset, so you can start from `ocean` and adjust a
   single hue.
 
-Two theme keys drive the framing, as in bada:
+The light palette uses a slate canvas with blue accents; dark uses deep slate
+with soft blue accents. Selected rows use a consistent contrasting text color,
+with underlined search matches.
+
+Theme keys control the canvas and framing:
+
+- `background` / `foreground` — the full canvas and default text colors
 
 - `border` — the rounded panel frames
 - `status_alt_bg` / `status_alt_fg` — the table-header bar and the key-hint chips

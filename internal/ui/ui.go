@@ -46,6 +46,7 @@ const (
 )
 
 type uiStyles struct {
+	Base        lipgloss.Style
 	Title       lipgloss.Style
 	Heading     lipgloss.Style
 	Accent      lipgloss.Style

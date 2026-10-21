@@ -26,7 +26,7 @@ func (m Model) View() string {
 func (m Model) fillView(body string) string {
 	status := m.renderStatusBar()
 	if m.height <= 0 {
-		return body + "\n" + status
+		return m.paintCanvas(body + "\n" + status)
 	}
 
 	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
@@ -37,7 +37,19 @@ func (m Model) fillView(body string) string {
 	for len(lines) < target {
 		lines = append(lines, "")
 	}
-	return strings.Join(lines, "\n") + "\n" + status
+	return m.paintCanvas(strings.Join(lines, "\n") + "\n" + status)
+}
+
+// paintCanvas also paints empty rows, preserving the terminal's anti-wrap gutter.
+func (m Model) paintCanvas(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if m.width > 2 {
+			line = padTo(line, m.width-2)
+		}
+		lines[i] = m.styles.Base.Render(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderMainView stacks the list, the open entry (if any), the prompt line, and
@@ -220,7 +232,10 @@ func (m Model) renderListRow(i int, cols listColumns, inner int, continues bool,
 	var folderCell string
 	switch {
 	case folder == "":
-		folderCell = m.styles.Muted.Render("–")
+		folderCell = "–"
+		if !selected {
+			folderCell = m.styles.Muted.Render(folderCell)
+		}
 	case continues && folder == prevFolder && m.query == "" && !selected:
 		folderCell = ""
 	default:
@@ -228,10 +243,10 @@ func (m Model) renderListRow(i int, cols listColumns, inner int, continues bool,
 		if selected {
 			base = lipgloss.NewStyle()
 		}
-		folderCell = m.highlight(folder, 0, hit, cols.folder, base)
+		folderCell = m.highlight(folder, 0, hit, cols.folder, base, selected)
 	}
 
-	entryCell := m.highlight(entry, entryOffset, hit, cols.entry, lipgloss.NewStyle())
+	entryCell := m.highlight(entry, entryOffset, hit, cols.entry, lipgloss.NewStyle(), selected)
 	updated := humanTime(item.Modified)
 	if !selected {
 		updated = m.styles.Muted.Render(updated)
@@ -239,9 +254,9 @@ func (m Model) renderListRow(i int, cols listColumns, inner int, continues bool,
 
 	lead := "  "
 	if selected {
-		lead = m.styles.Accent.Render("▸ ")
+		lead = "▸ "
 		if m.loading == item.Name {
-			lead = m.styles.Warning.Render("◌ ")
+			lead = "◌ "
 		}
 	}
 
@@ -256,7 +271,7 @@ func (m Model) renderListRow(i int, cols listColumns, inner int, continues bool,
 // highlight renders text in base, with fuzzy-matched runes picked out.
 // positions index the full entry name; offset is where text starts within it.
 // Over-long text keeps its head and ends in an ellipsis.
-func (m Model) highlight(text string, offset int, hit map[int]bool, width int, base lipgloss.Style) string {
+func (m Model) highlight(text string, offset int, hit map[int]bool, width int, base lipgloss.Style, selected bool) string {
 	runes := []rune(text)
 	if len(runes) > width {
 		runes = append(runes[:width-1], '…')
@@ -264,7 +279,11 @@ func (m Model) highlight(text string, offset int, hit map[int]bool, width int, b
 	var b strings.Builder
 	for i, r := range runes {
 		if hit[offset+i] && r != '…' {
-			b.WriteString(m.styles.MatchHit.Render(string(r)))
+			hitStyle := m.styles.MatchHit
+			if selected {
+				hitStyle = lipgloss.NewStyle().Bold(true).Underline(true)
+			}
+			b.WriteString(hitStyle.Render(string(r)))
 		} else {
 			b.WriteString(base.Render(string(r)))
 		}
@@ -361,6 +380,14 @@ func (m Model) renderDetailPanel(maxRows int) string {
 			style = m.styles.Mask
 		} else if r.secret {
 			style = m.styles.Secret
+		}
+		if i == m.entryCursor {
+			num = fmt.Sprintf(" %2d ", i+1)
+			label = padTo(r.label, labelWidth)
+			style = lipgloss.NewStyle()
+			if r.secret && m.revealed {
+				style = style.Underline(true)
+			}
 		}
 		value = style.Render(truncateANSI(value, valueWidth))
 
