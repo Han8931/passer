@@ -30,9 +30,11 @@ type Keymap struct {
 	CopyPassword string `toml:"copy_password"`
 	CopyUsername string `toml:"copy_username"`
 	CopyURL      string `toml:"copy_url"`
+	SetUsername  string `toml:"set_username"`
 	Reveal       string `toml:"reveal"`
 	Add          string `toml:"add"`
 	Edit         string `toml:"edit"`
+	EditFile     string `toml:"edit_file"`
 	Delete       string `toml:"delete"`
 	Rename       string `toml:"rename"`
 	ThemeToggle  string `toml:"theme_toggle"`
@@ -452,9 +454,11 @@ func applyKeyDefaults(cfg *Config) {
 		{&k.CopyPassword, def.CopyPassword},
 		{&k.CopyUsername, def.CopyUsername},
 		{&k.CopyURL, def.CopyURL},
+		{&k.SetUsername, def.SetUsername},
 		{&k.Reveal, def.Reveal},
 		{&k.Add, def.Add},
 		{&k.Edit, def.Edit},
+		{&k.EditFile, def.EditFile},
 		{&k.Delete, def.Delete},
 		{&k.Rename, def.Rename},
 		{&k.ThemeToggle, def.ThemeToggle},
@@ -530,9 +534,11 @@ func defaultConfig() Config {
 			CopyPassword: "y",
 			CopyUsername: "u",
 			CopyURL:      "b",
+			SetUsername:  "U",
 			Reveal:       " ",
 			Add:          "a",
 			Edit:         "e",
+			EditFile:     "E",
 			Delete:       "D",
 			Rename:       "m",
 			ThemeToggle:  "t",

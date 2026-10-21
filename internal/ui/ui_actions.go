@@ -118,6 +118,8 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.keySearch(msg)
 	case modeConfirmDelete:
 		return m.keyConfirmDelete(msg)
+	case modeEditField:
+		return m.keyEditField(msg)
 	case modeHelp:
 		return m.keyHelp(msg)
 	case modeDetail:
@@ -227,10 +229,15 @@ func (m Model) keyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case k.CopyURL:
 		return m.requestEntry(intentCopyURL)
 
+	case k.SetUsername:
+		return m.requestEntry(intentSetUsername)
+
 	case k.Add:
 		return m.openAdd()
 
-	case k.Edit:
+	case k.Edit, k.EditFile:
+		// No row is selected in the list, so there is no single value to edit;
+		// both keys open the whole file in $EDITOR.
 		name := m.currentName()
 		if name == "" {
 			return m, nil
@@ -364,12 +371,7 @@ func (m Model) keyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.entry == nil {
 			return m, nil
 		}
-		value, ok := m.entry.Username(m.cfg.UsernameFields)
-		if !ok {
-			m.status, m.statusErr = "no username field", true
-			return m, nil
-		}
-		return m.startCopy("username", value)
+		return m.copyUsername(*m.entry)
 
 	case k.CopyURL:
 		if m.entry == nil {
@@ -391,7 +393,21 @@ func (m Model) keyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		row := rows[m.entryCursor]
 		return m.startCopy(row.label, row.value)
 
+	case k.SetUsername:
+		if m.entry == nil {
+			return m, nil
+		}
+		return m.openSetAccount(*m.entry, modeDetail)
+
 	case k.Edit:
+		// In an open entry the cursor is on a specific value, so `e` edits that
+		// one value in place. The whole file is still one keystroke away on E.
+		if m.entry == nil || m.entryCursor < 0 || m.entryCursor >= len(rows) {
+			return m, nil
+		}
+		return m.openEditField(*m.entry, rows[m.entryCursor], modeDetail)
+
+	case k.EditFile:
 		if m.entry == nil {
 			return m, nil
 		}
@@ -692,12 +708,214 @@ func (m Model) submitAdd() (tea.Model, tea.Cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// Field editor
+// ---------------------------------------------------------------------------
+
+// openSetAccount opens the editor on an entry's account identifier, pre-filled
+// with whatever passer currently resolves — so an inferred value can be
+// confirmed into a real field with one keystroke, and a wrong guess corrected
+// rather than only reported.
+//
+// from is the mode to return to. Opening from the list means this decrypt
+// exists only to serve the rewrite, so closing drops the plaintext again.
+func (m Model) openSetAccount(entry pass.Entry, from mode) (tea.Model, tea.Cmd) {
+	current, _, _ := entry.UsernameFrom(m.cfg.UsernameFields)
+	return m.openPrompt(entry, from, &fieldPrompt{
+		name:    entry.Name,
+		from:    from,
+		label:   "account",
+		line:    accountRow,
+		account: true,
+	}, current, "you@example.com")
+}
+
+// openEditField opens the editor on the detail row under the cursor.
+//
+// A row derived from the entry's name has no line to rewrite, so editing it
+// means registering an account instead — the one case that adds a line rather
+// than replacing one.
+func (m Model) openEditField(entry pass.Entry, row detailRow, from mode) (tea.Model, tea.Cmd) {
+	if row.line == accountRow {
+		return m.openSetAccount(entry, from)
+	}
+	return m.openPrompt(entry, from, &fieldPrompt{
+		name:   entry.Name,
+		from:   from,
+		label:  row.label,
+		line:   row.line,
+		secret: row.secret,
+	}, row.value, "value")
+}
+
+// openPrompt is the shared setup for both entry points.
+func (m Model) openPrompt(entry pass.Entry, from mode, prompt *fieldPrompt, value, placeholder string) (tea.Model, tea.Cmd) {
+	e := entry
+	m.entry = &e
+	m.field = prompt
+	m.mode = modeEditField
+
+	m.input.SetValue(value)
+	m.input.Placeholder = placeholder
+	// A masked row stays masked while it is edited, so a shoulder-surfer gains
+	// nothing from watching someone correct a typo in a TOTP seed. ctrl+r
+	// reveals it, exactly as in the New Entry dialog.
+	if prompt.secret {
+		m.input.EchoMode = textinput.EchoPassword
+		m.input.EchoCharacter = '•'
+	} else {
+		m.input.EchoMode = textinput.EchoNormal
+	}
+	m.input.CursorEnd()
+	m.input.Focus()
+	m.status, m.statusErr = "", false
+	m.lockLeft = m.cfg.Security.LockSeconds
+	return m, m.ensureTicking()
+}
+
+// closePrompt leaves the editor, releasing the plaintext when it was only
+// decrypted for this.
+func (m Model) closePrompt() Model {
+	from := modeList
+	if m.field != nil {
+		from = m.field.from
+	}
+	m.field = nil
+	m.input.Blur()
+	m.input.SetValue("")
+	m.input.Placeholder = ""
+	m.input.EchoMode = textinput.EchoNormal
+	m.mode = from
+	if from != modeDetail {
+		m.entry = nil
+		m.revealed = false
+		m.revealLeft = 0
+	}
+	return m
+}
+
+func (m Model) keyEditField(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	f := m.field
+	if f == nil {
+		return m.closePrompt(), nil
+	}
+
+	switch msg.String() {
+	case "esc":
+		return m.closePrompt(), nil
+
+	case "ctrl+r":
+		if !f.secret {
+			return m, nil
+		}
+		f.reveal = !f.reveal
+		if f.reveal {
+			m.input.EchoMode = textinput.EchoNormal
+		} else {
+			m.input.EchoMode = textinput.EchoPassword
+		}
+		return m, nil
+
+	case "ctrl+g":
+		// Only on the password line: generating a value for a url or a note
+		// would be nonsense, and silently overwriting one would be worse.
+		if f.line != 0 {
+			return m, nil
+		}
+		pw, err := pass.NewPassword(m.cfg.Generate.Length, m.cfg.Generate.Symbols)
+		if err != nil {
+			m.status, m.statusErr = err.Error(), true
+			return m, nil
+		}
+		m.input.SetValue(pw)
+		m.input.CursorEnd()
+		// Show it: a password you generated but never see is one you cannot
+		// check against a site's character rules.
+		f.reveal = true
+		m.input.EchoMode = textinput.EchoNormal
+		return m, nil
+
+	case "enter":
+		return m.submitEditField()
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+func (m Model) submitEditField() (tea.Model, tea.Cmd) {
+	entry, f := m.entry, m.field
+	if entry == nil || f == nil {
+		// The idle lock dropped the plaintext while the editor was open.
+		mm := m.closePrompt()
+		mm.status, mm.statusErr = "entry locked; open it again", true
+		return mm, nil
+	}
+
+	value := strings.TrimSpace(m.input.Value())
+	// An empty prompt cancels rather than clearing the value: losing a password
+	// or an account should never be one keystroke away. Removing a line is what
+	// E and $EDITOR are for.
+	if value == "" {
+		mm := m.closePrompt()
+		mm.status, mm.statusErr = "cancelled", false
+		return mm, nil
+	}
+
+	content, err := m.fieldContent(*entry, *f, value)
+	if err != nil {
+		mm := m.closePrompt()
+		mm.status, mm.statusErr = err.Error(), true
+		return mm, nil
+	}
+	name := entry.Name
+	if content == "" {
+		mm := m.closePrompt()
+		mm.status, mm.statusErr = name+" unchanged", false
+		return mm, nil
+	}
+
+	mm := m.closePrompt()
+	mm.status, mm.statusErr = "saving "+name+"…", false
+	return mm, updateCmd(mm.store, name, content)
+}
+
+// fieldContent builds the entry's new file content, or "" when the edit is a
+// no-op.
+func (m Model) fieldContent(entry pass.Entry, f fieldPrompt, value string) (string, error) {
+	if f.account {
+		// Submitting an unchanged value is only a no-op when it already lives in
+		// a field. When it was *inferred* from a bare line or from the entry's
+		// name, accepting the pre-filled value is the whole point of the prompt:
+		// it is how an inferred account becomes a recorded one.
+		current, source, _ := entry.UsernameFrom(m.cfg.UsernameFields)
+		if value == current && source == pass.UsernameField {
+			return "", nil
+		}
+		return entry.SetUsername(value, pass.UsernameKeys(m.cfg.UsernameFields)), nil
+	}
+
+	if f.line == 0 {
+		if value == entry.Password {
+			return "", nil
+		}
+	} else {
+		for _, l := range entry.Lines {
+			if l.Index == f.line && value == l.Value {
+				return "", nil
+			}
+		}
+	}
+	return entry.SetValueAt(f.line, value)
+}
+
+// ---------------------------------------------------------------------------
 // Command line
 // ---------------------------------------------------------------------------
 
 // commandNames are the : commands, in the order Tab cycles them.
 var commandNames = []string{
-	"add", "config", "delete", "generate", "help", "quit", "reload", "rename", "theme",
+	"account", "add", "config", "delete", "generate", "help", "quit", "reload", "rename", "theme",
 }
 
 func (m Model) keyCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -826,6 +1044,18 @@ func (m Model) runCommand(raw string) (tea.Model, tea.Cmd) {
 		mm.add.inputs[fieldName].CursorEnd()
 		return mm, cmd
 
+	case "account", "user", "username":
+		// The entry has to be decrypted before it can be rewritten, so this is
+		// the same two-step the U key takes.
+		if m.mode == modeDetail && m.entry != nil {
+			return m.openSetAccount(*m.entry, modeDetail)
+		}
+		if m.currentName() == "" {
+			m.status, m.statusErr = "no entry selected", true
+			return m, nil
+		}
+		return m.requestEntry(intentSetUsername)
+
 	case "generate", "gen":
 		return m.commandGenerate(args)
 
@@ -938,6 +1168,7 @@ type detailRow struct {
 	label  string
 	value  string
 	secret bool
+	line   int // raw line the value lives on, or accountRow
 }
 
 // detailRows flattens the decrypted entry into the rows the detail view shows
@@ -946,25 +1177,37 @@ func (m Model) detailRows() []detailRow {
 	if m.entry == nil {
 		return nil
 	}
-	rows := []detailRow{{label: "password", value: m.entry.Password, secret: true}}
-	for _, f := range m.entry.Fields {
-		// Anything that looks like a second secret stays masked too; a TOTP
-		// seed or recovery code is no less sensitive than the password.
-		rows = append(rows, detailRow{label: f.Key, value: f.Value, secret: isSecretField(f.Key)})
+	rows := []detailRow{{label: "password", value: m.entry.Password, secret: true, line: 0}}
+	// An account identifier carried by the entry's name has no line of its own
+	// to render. Give it a row so what `u` copies is visible on screen, and so
+	// the positional copy keys can reach it like any real field. The other two
+	// conventions already appear as a field or a note row.
+	if value, source, ok := m.entry.UsernameFrom(m.cfg.UsernameFields); ok && source == pass.UsernameName {
+		rows = append(rows, detailRow{label: "account", value: value, line: accountRow})
 	}
+
+	// Walked in file order rather than fields-then-notes, so a row's position
+	// in the entry is the position it is shown in — which is what lets `e` edit
+	// the line the cursor is actually on.
 	notes := 0
-	for _, note := range m.entry.Notes {
-		if strings.TrimSpace(note) == "" {
+	for _, l := range m.entry.Lines {
+		if l.Key != "" {
+			// Anything that looks like a second secret stays masked too; a TOTP
+			// seed or recovery code is no less sensitive than the password.
+			rows = append(rows, detailRow{label: l.Key, value: l.Value, secret: isSecretField(l.Key), line: l.Index})
+			continue
+		}
+		if strings.TrimSpace(l.Value) == "" {
 			continue
 		}
 		// pass-otp stores its seed as a bare otpauth:// URI, which the field
 		// parser rightly treats as a note — but it carries the TOTP secret.
-		if isOTPURI(note) {
-			rows = append(rows, detailRow{label: "otp", value: note, secret: true})
+		if isOTPURI(l.Value) {
+			rows = append(rows, detailRow{label: "otp", value: l.Value, secret: true, line: l.Index})
 			continue
 		}
 		notes++
-		rows = append(rows, detailRow{label: fmt.Sprintf("note %d", notes), value: note})
+		rows = append(rows, detailRow{label: fmt.Sprintf("note %d", notes), value: l.Value, line: l.Index})
 	}
 	return rows
 }

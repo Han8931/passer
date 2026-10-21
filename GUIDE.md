@@ -132,9 +132,41 @@ decrypt the entry, take the one field, and discard the rest — the secret is
 never displayed.
 
 - `y` — the password
-- `u` — the username: the first field matching your `username_fields`, then the
-  built-in conventions (`login`, `username`, `user`, `email`, `account`)
+- `u` — the username or email address (see below)
 - `b` — the URL: the first `url`, `uri`, `site`, `host`, or `website` field
+
+#### Where `u` looks for your account
+
+Most stores don't label the account with a `key: value` line, so `u` tries three
+conventions in order and stops at the first that matches:
+
+| | Looks like | Copied as |
+|---|---|---|
+| 1. A labelled field | `login: han@example.com` | `username` |
+| 2. A bare address line | `han@example.com` on its own line | `username (from note)` |
+| 3. The entry name | `web/github.com/han@example.com` | `username (from name)` |
+
+A field always wins, since it is the only one you stated outright. The status bar
+names the source so a value Passer *inferred* is never mistaken for one you
+labelled yourself.
+
+Both fallbacks require something that looks like an email address — one `@`, no
+spaces, no `:` or `/`. That is what separates an account from the free-form prose
+and bare site names those same positions usually hold, and it is what keeps a
+`pass-otp` seed (`otpauth://totp/GitHub:han@example.com?secret=…`, which has an
+`@` and no spaces) from being copied as your username.
+
+So a non-email account in the entry name — `web/github.com/han` — is *not*
+picked up: it can't be told apart from a site name like `web/github.com`. Add a
+`login:` line to those entries, or set `username_fields` if your store uses a
+key Passer doesn't know:
+
+```toml
+username_fields = ['acct', 'login', 'username', 'user', 'email']
+```
+
+When nothing matches, `u` names the fields that would work rather than just
+reporting the absence.
 
 In the detail view you can also copy any field by position:
 
@@ -193,10 +225,55 @@ same one `pass` uses: `[:alnum:]`, plus `[:punct:]` unless you set
 
 ## Editing, renaming, deleting
 
-- `e` — opens the entry in `$EDITOR` via `pass edit`. Passer suspends itself,
+### Editing one value — `e`
+
+With an entry open, `e` edits the value of the **row under the cursor**, in a
+one-line prompt under the panel. It works on every row: the password, any
+`key: value` field, and any free-form note.
+
+```
+ENTRY  web/github
+  1  password   ••••••••
+▸ 2  login      han          ← e edits this
+  3  url        https://github.com
+
+ login → han▌   (enter saves, esc cancels)
+```
+
+- `Enter` saves; `Esc` cancels. An **empty prompt cancels** rather than clearing
+  the value — losing a password should never be one keystroke away. Removing a
+  line is what `E` is for.
+- On a field, only the value changes. The key keeps your spelling: a
+  `username:` line is never silently rewritten to `login:`.
+- On the password row, `ctrl+g` generates a fresh password and shows it; `ctrl+r`
+  toggles reveal. Masked rows (otp, recovery codes, anything matching the secret
+  field names) stay masked while you type, with `ctrl+r` to reveal.
+- Saving rewrites **your** lines. Every other line, and the order of all of
+  them, survives byte for byte — passer edits the decrypted text rather than
+  re-composing the file from what it parsed.
+
+Detail rows are listed in **file order**, so the row you are on is the line you
+are editing.
+
+### Registering an account — `U`
+
+`U` sets the account identifier on an entry, from the list or from an open
+entry, without going through `$EDITOR`. It is pre-filled with whatever `u` would
+copy, so an account passer only *inferred* — from a bare address line or from
+the entry's name — becomes a real `login:` field by pressing `U` then `Enter`.
+
+Registering an address that was already sitting on its own line **absorbs** that
+line rather than duplicating the value. If no account field exists, the new line
+goes directly under the password, using the first of your `username_fields`
+(`login` by default).
+
+### The whole file — `E`
+
+- `E` — opens the entry in `$EDITOR` via `pass edit`. Passer suspends itself,
   hands over the terminal, and on return re-reads the store and re-decrypts the
-  entry if it is still on screen. This is the way to edit fields passer's add
-  dialog doesn't cover.
+  entry if it is still on screen. This is the way to add or remove lines, which
+  the one-line editor deliberately won't do. From the list, where no row is
+  focused, `e` does this too.
 - `m` — rename / move. `pass mv` re-encrypts the entry if the destination sits
   under a different `.gpg-id`. Refuses to clobber an existing name, and
   refuses a destination that is a folder — give the full path instead
@@ -214,6 +291,7 @@ longest shared prefix when ambiguous), `↑`/`↓` walk previously run commands,
 
 - `:add [name]` — open the New Entry dialog, optionally prefilled
 - `:generate <name> [length]` — add a password-only entry
+- `:account` — register the account on the selected entry (same as `U`)
 - `:rename <old> <new>` — move an entry
 - `:delete [name]` — delete an entry (defaults to the one under the cursor)
 - `:theme [name]` — list the palettes, or switch to one
@@ -231,7 +309,9 @@ What passer guarantees, and what it doesn't.
 - **Decrypts lazily.** Browsing and searching never invoke GPG. Only opening or
   copying a specific entry does.
 - **Never writes plaintext to disk.** Decrypted entries exist in memory, and
-  only while the detail view is open.
+  only while the detail view or an edit prompt is open. An entry decrypted from
+  the list purely to serve an edit is released as soon as that prompt closes,
+  and the idle lock drops it either way.
 - **Keeps secrets out of the process list.** Passwords reach `pass insert` and
   the clipboard tool through stdin, never as command-line arguments.
 - **Masks by default.** Revealing is always a deliberate keystroke.

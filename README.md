@@ -33,8 +33,9 @@ timer.
   dots until you reveal them, and re-mask on a timer.
 - **Idle lock** — decrypted entries are dropped from memory after two minutes
   without a keypress.
-- **Full editing** — add, generate, rename, and delete entries; `e` hands the
-  file to `$EDITOR` through `pass edit`.
+- **Full editing** — add, generate, rename, and delete entries, and edit any
+  single field in place without leaving the TUI; `E` still hands the whole file
+  to `$EDITOR` through `pass edit`.
 - **Personal by design** — every key is rebindable and seven built-in themes
   ship with full color customization.
 
@@ -45,8 +46,9 @@ Passer is a front end, not a re-implementation:
 - Every read and write goes through the `pass` binary, so GPG key resolution,
   per-directory `.gpg-id` files, pinentry, and the store's git integration all
   behave exactly as they do on the command line.
-- Decrypted entries are held in memory only, for as long as the detail view is
-  open. Passer never writes plaintext to disk.
+- Decrypted entries are held in memory only, for as long as the detail view or
+  an edit prompt is open, and are dropped by the idle lock either way. Passer
+  never writes plaintext to disk.
 - Secrets reach the clipboard through the tool's stdin, never as a command-line
   argument, so they don't appear in the process list.
 
@@ -88,10 +90,13 @@ when a copy can't go through.
 - `j` / `k` — move through entries
 - `/` — fuzzy search; `Enter` opens the best match
 - `y` — copy the password (auto-clears after 45s)
-- `u` — copy the username
+- `u` — copy the username or email, from a `login:` field, a bare address line,
+  or the entry's own name
 - `Enter` — open the entry and see its fields
 - `space` — reveal the password while the entry is open
 - `a` — add an entry (leave the password blank to generate one)
+- `e` — edit the focused field in place; `E` opens the whole file in `$EDITOR`
+- `U` — register the account/email on an entry
 - `?` — the complete in-app keybinding reference
 - `q` — back, or quit from the unfiltered list
 

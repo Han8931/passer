@@ -84,6 +84,10 @@ printf 'hunter2\nlogin: han\nurl: https://github.com\notpauth://totp/GitHub:han?
 printf 'correct horse battery staple\nusername: han@example.com\nurl: https://gitlab.com\nrecovery codes: 1111 2222 3333\n' | seed web/gitlab
 printf 's3cret\nemail: han@example.com\nThis line is a free-form note.\n' | seed email/fastmail
 printf 'only-a-password\n' | seed wifi
+# The two unlabelled account conventions `u` has to fall back to: an address on
+# a bare line, and pass's own "site/user@host" naming.
+printf 'bare-line-pw\nhan@example.com\nThis line is a free-form note.\n' | seed web/reddit
+printf 'name-only-pw\n' | seed 'web/aws.amazon.com/han@example.com'
 
 install -m 0600 "${ROOT_DIR}/config.example.toml" "${PASSER_CONFIG}"
 

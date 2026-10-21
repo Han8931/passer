@@ -28,6 +28,7 @@ const (
 	modeAdd
 	modeRename
 	modeConfirmDelete
+	modeEditField
 )
 
 // loadIntent is what to do once an entry finishes decrypting.
@@ -42,8 +43,32 @@ const (
 	intentCopyPassword
 	intentCopyUsername
 	intentCopyURL
-	intentRefresh // re-decrypt an entry already on screen, e.g. after `pass edit`
+	intentSetUsername // decrypt so the account prompt can rewrite the entry
+	intentEditField   // decrypt, then open the field editor on the entry
+	intentRefresh     // re-decrypt an entry already on screen, e.g. after `pass edit`
 )
+
+// fieldPrompt backs the one-line editor used for both `e` (edit the field under
+// the cursor) and `U` (register the account).
+//
+// The decrypted entry it rewrites is the one in Model.entry, so that plaintext
+// has exactly one owner and the idle lock already covers it. The rest is what
+// the prompt needs to write the value back and to put the user where they were.
+type fieldPrompt struct {
+	name  string // entry being rewritten
+	from  mode   // where to return on cancel or save
+	label string // what is being edited, shown in the prompt
+	// line is the raw line the value lives on. accountRow means there is no
+	// such line: the account was derived from the entry's name, so saving has
+	// to add a field rather than replace a line.
+	line    int
+	secret  bool // mask while typing
+	reveal  bool
+	account bool // write through SetUsername, not SetValueAt
+}
+
+// accountRow is the line index of a detail row that has no line in the file.
+const accountRow = -1
 
 type uiStyles struct {
 	Base        lipgloss.Style
@@ -164,6 +189,7 @@ type Model struct {
 	lockLeft int
 
 	add           *addState
+	field         *fieldPrompt
 	renameFrom    string
 	confirmDelete string
 
@@ -297,6 +323,22 @@ func insertCmd(store *pass.Store, name, content string) tea.Cmd {
 	}
 }
 
+// actionUpdated marks an in-place field write, so the result can refresh an
+// entry that is still on screen.
+const actionUpdated = "updated"
+
+// updateCmd rewrites an entry whose content has had one value changed.
+//
+// This is the one place passer overwrites an existing entry. That is safe only
+// because content is the entry's own decrypted text with a single line changed
+// — see Entry.SetValueAt and Entry.SetUsername — rather than something composed
+// from scratch.
+func updateCmd(store *pass.Store, name, content string) tea.Cmd {
+	return func() tea.Msg {
+		return writeDoneMsg{name: name, action: actionUpdated, err: store.Insert(name, content, true)}
+	}
+}
+
 func removeCmd(store *pass.Store, name string) tea.Cmd {
 	return func() tea.Msg {
 		return writeDoneMsg{name: name, action: "deleted", err: store.Remove(name)}
@@ -421,7 +463,9 @@ func (m Model) onEntryLoaded(msg entryLoadedMsg) (tea.Model, tea.Cmd) {
 	// moved on meanwhile — opened a dialog, or closed the entry being refreshed
 	// — the result must not yank them back into the detail view.
 	switch msg.intent {
-	case intentOpen:
+	case intentOpen, intentSetUsername, intentEditField:
+		// A decrypt that sat on pinentry must not open a view or a prompt over
+		// whatever the user moved on to.
 		if m.mode != modeList {
 			return m, nil
 		}
@@ -449,12 +493,10 @@ func (m Model) onEntryLoaded(msg entryLoadedMsg) (tea.Model, tea.Cmd) {
 		return m.startCopy("password", msg.entry.Password)
 
 	case intentCopyUsername:
-		value, ok := msg.entry.Username(m.cfg.UsernameFields)
-		if !ok {
-			m.status, m.statusErr = msg.name+" has no username field", true
-			return m, nil
-		}
-		return m.startCopy("username", value)
+		return m.copyUsername(msg.entry)
+
+	case intentSetUsername:
+		return m.openSetAccount(msg.entry, modeList)
 
 	case intentCopyURL:
 		value, ok := msg.entry.URL()
@@ -465,6 +507,33 @@ func (m Model) onEntryLoaded(msg entryLoadedMsg) (tea.Model, tea.Cmd) {
 		return m.startCopy("url", value)
 	}
 	return m, nil
+}
+
+// copyUsername copies an entry's account identifier.
+//
+// The label names the convention that matched, so a value passer inferred from
+// a bare line or from the entry's own name is never mistaken for one the user
+// labelled themselves. A miss lists the field names that would work rather than
+// just reporting the absence, since adding one is the fix.
+func (m Model) copyUsername(entry pass.Entry) (tea.Model, tea.Cmd) {
+	value, source, ok := entry.UsernameFrom(m.cfg.UsernameFields)
+	if !ok {
+		keys := strings.Join(pass.UsernameKeys(m.cfg.UsernameFields), ", ")
+		m.status, m.statusErr = "no account in "+entry.Name+"; add a field: "+keys, true
+		return m, nil
+	}
+	return m.startCopy(usernameLabel(source), value)
+}
+
+// usernameLabel is what the status bar calls the copied value.
+func usernameLabel(source pass.UsernameSource) string {
+	switch source {
+	case pass.UsernameNote:
+		return "username (from note)"
+	case pass.UsernameName:
+		return "username (from name)"
+	}
+	return "username"
 }
 
 // startCopy puts a value on the clipboard and arms the auto-clear countdown.
@@ -510,6 +579,12 @@ func (m Model) onWriteDone(msg writeDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	m.status, m.statusErr = fmt.Sprintf("%s %s", msg.name, msg.action), false
 	m.pendingSelect = msg.name
+	if msg.action == actionUpdated && m.entry != nil && m.entry.Name == msg.name {
+		// The entry is still open, and its file just changed underneath it:
+		// re-decrypt so the detail view shows the field that was registered
+		// rather than the stale rows it was built from.
+		return m, tea.Batch(loadItemsCmd(m.store), loadEntryCmd(m.store, msg.name, intentRefresh))
+	}
 	if msg.action == "deleted" {
 		m.pendingSelect = ""
 		// The deleted entry may be the one open in the detail view.
@@ -567,7 +642,16 @@ func (m Model) onTick() (tea.Model, tea.Cmd) {
 			m.entry = nil
 			m.revealed = false
 			m.revealLeft = 0
-			if m.mode == modeDetail {
+			switch m.mode {
+			case modeDetail:
+				m.mode = modeList
+			case modeEditField:
+				// The prompt rewrites m.entry, which has just been dropped, so
+				// it cannot be submitted any more; leaving it on screen would
+				// only invite typing into a dead field.
+				m.field = nil
+				m.input.Blur()
+				m.input.SetValue("")
 				m.mode = modeList
 			}
 			m.status, m.statusErr = "locked after inactivity", false
@@ -698,13 +782,19 @@ func (m Model) detailOpen() bool {
 	if m.entry == nil {
 		return false
 	}
-	return m.mode == modeDetail || (m.mode == modeCommand && m.prevMode == modeDetail)
+	switch m.mode {
+	case modeDetail, modeEditField:
+		return true
+	case modeCommand:
+		return m.prevMode == modeDetail
+	}
+	return false
 }
 
 // promptActive reports whether a one-line prompt sits under the list.
 func (m Model) promptActive() bool {
 	switch m.mode {
-	case modeSearch, modeCommand, modeRename, modeConfirmDelete:
+	case modeSearch, modeCommand, modeRename, modeConfirmDelete, modeEditField:
 		return true
 	}
 	return m.query != ""

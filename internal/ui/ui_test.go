@@ -2,11 +2,15 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
@@ -20,9 +24,12 @@ func testModel(names ...string) Model {
 	for i, n := range names {
 		items[i] = pass.Item{Name: n, Modified: time.Now()}
 	}
+	ti := textinput.New() // a zero-value textinput panics when focused
+	ti.Prompt = ""
 	m := Model{
 		cfg:    cfg,
 		items:  items,
+		input:  ti,
 		width:  100,
 		height: 30,
 		styles: buildStyles(cfg.Theme),
@@ -146,6 +153,358 @@ func TestDetailRowsIncludesNotesAndSkipsBlanks(t *testing.T) {
 	}
 }
 
+func TestDetailRowsSurfacesAnAccountCarriedByTheName(t *testing.T) {
+	entry := pass.ParseEntry("web/github.com/han@example.com", "hunter2\n")
+	m := testModel()
+	m.entry = &entry
+
+	rows := m.detailRows()
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want password plus the derived account", rows)
+	}
+	if rows[1].label != "account" || rows[1].value != "han@example.com" {
+		t.Errorf("second row = %+v, want the account from the entry name", rows[1])
+	}
+	if rows[1].secret {
+		t.Error("an account identifier is not a secret and should not be masked")
+	}
+}
+
+func TestDetailRowsDoesNotDuplicateALabelledAccount(t *testing.T) {
+	// The field already has a row of its own; a second derived one would be noise.
+	entry := pass.ParseEntry("web/github.com/han@example.com", "hunter2\nlogin: han\n")
+	m := testModel()
+	m.entry = &entry
+
+	for _, r := range m.detailRows() {
+		if r.label == "account" {
+			t.Errorf("rows = %+v, want no derived account row when a field exists", m.detailRows())
+		}
+	}
+}
+
+func TestSetAccountPromptPrefillsTheInferredValue(t *testing.T) {
+	// Pressing U on an entry whose account passer only inferred should offer
+	// that value, so confirming it into a real field is one keystroke.
+	entry := pass.ParseEntry("web/github.com/han@example.com", "hunter2\n")
+	m := testModel("web/github.com/han@example.com")
+	m.cfg.Keys.SetUsername = "U"
+	m.entry = &entry
+	m.mode = modeDetail
+
+	out, _ := m.onKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
+	got := out.(Model)
+	if got.mode != modeEditField {
+		t.Fatalf("mode = %v, want the account prompt", got.mode)
+	}
+	if got.input.Value() != "han@example.com" {
+		t.Errorf("prompt = %q, want it pre-filled with the inferred account", got.input.Value())
+	}
+	if got.field == nil || got.field.from != modeDetail {
+		t.Errorf("field = %+v, want a return to the detail view", got.field)
+	}
+}
+
+func TestSetAccountEscapeReleasesPlaintextOpenedFromTheList(t *testing.T) {
+	// A decrypt made only to serve the rewrite must not outlive the prompt.
+	entry := pass.ParseEntry("wifi", "only-a-password\n")
+	m := testModel("wifi")
+	out, _ := m.openSetAccount(entry, modeList)
+
+	back, _ := out.(Model).onKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got := back.(Model)
+	if got.mode != modeList {
+		t.Errorf("mode = %v, want the list", got.mode)
+	}
+	if got.entry != nil {
+		t.Error("cancelling a list-opened prompt must drop the decrypted entry")
+	}
+	if got.field != nil {
+		t.Error("prompt state should be cleared")
+	}
+}
+
+func TestSetAccountEscapeKeepsAnOpenEntry(t *testing.T) {
+	entry := pass.ParseEntry("wifi", "only-a-password\n")
+	m := testModel("wifi")
+	out, _ := m.openSetAccount(entry, modeDetail)
+
+	back, _ := out.(Model).onKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got := back.(Model)
+	if got.mode != modeDetail || got.entry == nil {
+		t.Errorf("mode = %v, entry = %v; want the entry still open", got.mode, got.entry)
+	}
+}
+
+func TestSetAccountSubmitWritesAndEmptyInputCancels(t *testing.T) {
+	entry := pass.ParseEntry("wifi", "only-a-password\n")
+
+	// A value: saves.
+	m := testModel("wifi")
+	out, _ := m.openSetAccount(entry, modeDetail)
+	mm := out.(Model)
+	mm.input.SetValue("han@example.com")
+	saved, cmd := mm.onKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Error("submitting a new account should issue a write")
+	}
+	if got := saved.(Model); got.mode != modeDetail || !strings.Contains(got.status, "saving") {
+		t.Errorf("mode = %v, status = %q; want a save in progress", got.mode, got.status)
+	}
+
+	// Nothing typed: cancels rather than clearing the field.
+	blank := testModel("wifi")
+	out2, _ := blank.openSetAccount(entry, modeDetail)
+	mm2 := out2.(Model)
+	mm2.input.SetValue("")
+	done, cmd2 := mm2.onKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd2 != nil {
+		t.Error("an empty prompt must not write anything")
+	}
+	if done.(Model).mode != modeDetail {
+		t.Errorf("mode = %v, want the prompt closed", done.(Model).mode)
+	}
+}
+
+func TestSetAccountConfirmingAnInferredValueStillWrites(t *testing.T) {
+	// Accepting the pre-filled value is how an inferred account becomes a
+	// recorded one, so it must not be short-circuited as "unchanged".
+	for _, raw := range []struct{ name, text string }{
+		{"web/reddit", "pw\nhan@example.com\n"}, // inferred from a note
+		{"web/x/han@example.com", "pw\n"},       // inferred from the name
+	} {
+		entry := pass.ParseEntry(raw.name, raw.text)
+		m := testModel(raw.name)
+		m.store = nil
+		out, _ := m.openSetAccount(entry, modeDetail)
+		mm := out.(Model)
+		if mm.input.Value() != "han@example.com" {
+			t.Fatalf("%s: prompt = %q", raw.name, mm.input.Value())
+		}
+		// Press enter on the pre-filled value, changing nothing.
+		saved, cmd := mm.keyEditField(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd == nil {
+			t.Errorf("%s: confirming an inferred account should write a field", raw.name)
+		}
+		if got := saved.(Model).status; !strings.Contains(got, "saving") {
+			t.Errorf("%s: status = %q, want a save in progress", raw.name, got)
+		}
+	}
+
+	// A value already in a field, resubmitted unchanged, writes nothing.
+	entry := pass.ParseEntry("x", "pw\nlogin: han\n")
+	m := testModel("x")
+	out, _ := m.openSetAccount(entry, modeDetail)
+	mm := out.(Model)
+	done, cmd := mm.keyEditField(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Error("resubmitting an unchanged field should not rewrite the entry")
+	}
+	if got := done.(Model).status; !strings.Contains(got, "unchanged") {
+		t.Errorf("status = %q, want it reported as unchanged", got)
+	}
+}
+
+func TestDetailRowsFollowFileOrderAndCarryTheirLine(t *testing.T) {
+	// Row order has to match the file, because that correspondence is what lets
+	// `e` edit the line the cursor is actually on.
+	entry := pass.ParseEntry("x", "pw\na note\nurl: https://example.com\nlogin: han\n")
+	m := testModel("x")
+	m.entry = &entry
+
+	rows := m.detailRows()
+	want := []struct {
+		label string
+		line  int
+	}{
+		{"password", 0},
+		{"note 1", 1},
+		{"url", 2},
+		{"login", 3},
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("rows = %+v, want %d rows in file order", rows, len(want))
+	}
+	for i, w := range want {
+		if rows[i].label != w.label || rows[i].line != w.line {
+			t.Errorf("row %d = %q@%d, want %q@%d", i, rows[i].label, rows[i].line, w.label, w.line)
+		}
+	}
+}
+
+func TestEditKeyEditsTheFocusedField(t *testing.T) {
+	entry := pass.ParseEntry("web/github", "hunter2\nlogin: han\nurl: https://github.com\n")
+	m := testModel("web/github")
+	m.cfg.Keys.Edit = "e"
+	m.entry = &entry
+	m.mode = modeDetail
+	m.entryCursor = 2 // the url row
+
+	out, _ := m.onKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	got := out.(Model)
+	if got.mode != modeEditField {
+		t.Fatalf("mode = %v, want the field editor", got.mode)
+	}
+	if got.field == nil || got.field.label != "url" || got.field.line != 2 {
+		t.Fatalf("field = %+v, want the url row at line 2", got.field)
+	}
+	if got.input.Value() != "https://github.com" {
+		t.Errorf("prompt = %q, want the url pre-filled", got.input.Value())
+	}
+
+	got.input.SetValue("https://gitlab.com")
+	saved, cmd := got.keyEditField(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || !strings.Contains(saved.(Model).status, "saving") {
+		t.Errorf("status = %q, cmd = %v; want a save", saved.(Model).status, cmd != nil)
+	}
+	// The write must change only that line.
+	content, err := entry.SetValueAt(2, "https://gitlab.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "hunter2\nlogin: han\nurl: https://gitlab.com\n"; content != want {
+		t.Errorf("content =\n%q\nwant\n%q", content, want)
+	}
+}
+
+func TestEditKeyMasksASecretFieldAndGeneratesOnlyForThePassword(t *testing.T) {
+	entry := pass.ParseEntry("x", "hunter2\notp: JBSWY3DPEHPK3PXP\n")
+	m := testModel("x")
+	m.cfg.Generate.Length = 24
+	m.entry = &entry
+	m.mode = modeDetail
+
+	// The otp row is a secret, so typing into it stays masked.
+	m.entryCursor = 1
+	out, _ := m.openEditField(entry, m.detailRows()[1], modeDetail)
+	secret := out.(Model)
+	if !secret.field.secret || secret.input.EchoMode != textinput.EchoPassword {
+		t.Errorf("otp row: secret = %v, echo = %v; want a masked prompt", secret.field.secret, secret.input.EchoMode)
+	}
+	// ctrl+g must not fabricate a value for a non-password line.
+	noGen, _ := secret.keyEditField(tea.KeyMsg{Type: tea.KeyCtrlG})
+	if noGen.(Model).input.Value() != "JBSWY3DPEHPK3PXP" {
+		t.Errorf("ctrl+g changed a non-password field to %q", noGen.(Model).input.Value())
+	}
+
+	// On the password row it does generate, and reveals what it made.
+	out2, _ := m.openEditField(entry, m.detailRows()[0], modeDetail)
+	gen, _ := out2.(Model).keyEditField(tea.KeyMsg{Type: tea.KeyCtrlG})
+	g := gen.(Model)
+	if len(g.input.Value()) != 24 || g.input.Value() == "hunter2" {
+		t.Errorf("generated password = %q, want 24 fresh characters", g.input.Value())
+	}
+	if g.input.EchoMode != textinput.EchoNormal {
+		t.Error("a generated password should be shown so it can be checked")
+	}
+}
+
+func TestEditKeyOnADerivedAccountRowRegistersIt(t *testing.T) {
+	// That row has no line in the file, so editing it has to add a field.
+	entry := pass.ParseEntry("web/x/han@example.com", "pw\n")
+	m := testModel("web/x/han@example.com")
+	m.entry = &entry
+	m.mode = modeDetail
+
+	rows := m.detailRows()
+	out, _ := m.openEditField(entry, rows[1], modeDetail)
+	got := out.(Model)
+	if got.field == nil || !got.field.account {
+		t.Fatalf("field = %+v, want the account path", got.field)
+	}
+	if got.input.Value() != "han@example.com" {
+		t.Errorf("prompt = %q, want the derived account", got.input.Value())
+	}
+}
+
+func TestEditKeyUnchangedValueWritesNothing(t *testing.T) {
+	entry := pass.ParseEntry("x", "pw\nurl: https://example.com\n")
+	m := testModel("x")
+	m.entry = &entry
+	out, _ := m.openEditField(entry, m.detailRows()[1], modeDetail)
+
+	done, cmd := out.(Model).keyEditField(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Error("resubmitting an unchanged value should not rewrite the entry")
+	}
+	if got := done.(Model).status; !strings.Contains(got, "unchanged") {
+		t.Errorf("status = %q, want it reported as unchanged", got)
+	}
+}
+
+func TestEditFileKeyStillOpensEditorFromAnOpenEntry(t *testing.T) {
+	// E must keep handing the whole file to $EDITOR now that e edits one field.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".gpg-id"), []byte("test@example.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := pass.Open(dir)
+	if err != nil {
+		t.Skip("pass is not installed")
+	}
+
+	entry := pass.ParseEntry("x", "pw\n")
+	m := testModel("x")
+	m.store = store
+	m.cfg.Keys.Edit, m.cfg.Keys.EditFile = "e", "E"
+	m.entry = &entry
+	m.mode = modeDetail
+
+	out, cmd := m.onKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if got := out.(Model); got.mode != modeDetail || got.field != nil {
+		t.Errorf("mode = %v, field = %+v; E should hand off to $EDITOR, not prompt", got.mode, got.field)
+	}
+	if cmd == nil {
+		t.Error("E should issue the $EDITOR hand-off")
+	}
+}
+
+func TestIdleLockClosesTheAccountPrompt(t *testing.T) {
+	// The prompt rewrites m.entry; once the lock drops that, the prompt cannot
+	// be submitted and must not stay on screen.
+	entry := pass.ParseEntry("wifi", "only-a-password\n")
+	m := testModel("wifi")
+	m.cfg.Security.LockSeconds = 1
+	out, _ := m.openSetAccount(entry, modeDetail)
+	mm := out.(Model)
+	mm.lockLeft = 1
+
+	locked, _ := mm.onTick()
+	got := locked.(Model)
+	if got.mode != modeList || got.entry != nil || got.field != nil {
+		t.Errorf("mode = %v, entry = %v, field = %+v; want everything released",
+			got.mode, got.entry, got.field)
+	}
+}
+
+func TestCopyUsernameReportsTheFieldsThatWouldWork(t *testing.T) {
+	entry := pass.ParseEntry("wifi", "only-a-password\n")
+	m := testModel()
+
+	out, _ := m.copyUsername(entry)
+	got := out.(Model)
+	if !got.statusErr {
+		t.Fatalf("status = %q, want an error for an entry with no account", got.status)
+	}
+	for _, want := range []string{"wifi", "login", "email"} {
+		if !strings.Contains(got.status, want) {
+			t.Errorf("status = %q, want it to mention %q", got.status, want)
+		}
+	}
+}
+
+func TestUsernameLabelNamesAnInferredSource(t *testing.T) {
+	for source, want := range map[pass.UsernameSource]string{
+		pass.UsernameField: "username",
+		pass.UsernameNote:  "username (from note)",
+		pass.UsernameName:  "username (from name)",
+	} {
+		if got := usernameLabel(source); got != want {
+			t.Errorf("usernameLabel(%v) = %q, want %q", source, got, want)
+		}
+	}
+}
+
 func TestDetailRowsEmptyWithoutAnEntry(t *testing.T) {
 	m := testModel()
 	if rows := m.detailRows(); rows != nil {
@@ -240,6 +599,21 @@ func TestViewsFitTheTerminalAndKeepThePrompt(t *testing.T) {
 			m.entry = &entry
 			m.mode, m.prevMode = modeCommand, modeDetail
 		}, " : "},
+		{"set account", func(m *Model) {
+			m.entry = &entry
+			m.mode = modeEditField
+			m.field = &fieldPrompt{name: entry.Name, from: modeDetail, label: "account", line: accountRow, account: true}
+		}, "account →"},
+		{"edit field", func(m *Model) {
+			m.entry = &entry
+			m.mode = modeEditField
+			m.field = &fieldPrompt{name: entry.Name, from: modeDetail, label: "url", line: 2}
+		}, "url →"},
+		{"edit password", func(m *Model) {
+			m.entry = &entry
+			m.mode = modeEditField
+			m.field = &fieldPrompt{name: entry.Name, from: modeDetail, label: "password", line: 0, secret: true}
+		}, "ctrl+g generates"},
 	}
 	for _, c := range cases {
 		for _, h := range []int{12, 30} {
@@ -256,7 +630,10 @@ func TestViewsFitTheTerminalAndKeepThePrompt(t *testing.T) {
 			if c.prompt != "" && !strings.Contains(plain, c.prompt) {
 				t.Errorf("%s at height %d: prompt %q is not on screen", c.name, h, c.prompt)
 			}
-			if c.name != "detail" && c.name != "detail command" && !strings.Contains(plain, "entry30") {
+			// Cases that open the detail panel give up list rows for it, so the
+			// cursor's entry is not guaranteed to still be on screen.
+			if !strings.HasPrefix(c.name, "edit") && c.name != "set account" &&
+				c.name != "detail" && c.name != "detail command" && !strings.Contains(plain, "entry30") {
 				t.Errorf("%s at height %d: the cursor's entry is not on screen", c.name, h)
 			}
 		}

@@ -82,6 +82,8 @@ func (m Model) promptLine() string {
 		return m.renderRenameLine()
 	case modeCommand:
 		return m.renderCommandLine()
+	case modeEditField:
+		return m.renderFieldPromptLine()
 	}
 	if m.mode == modeSearch || m.query != "" {
 		return m.renderSearchLine()
@@ -314,6 +316,24 @@ func (m Model) renderRenameLine() string {
 	return m.styles.Accent.Render(" rename → ") + m.input.View()
 }
 
+// renderFieldPromptLine draws the one-line field editor, naming the value being
+// edited and only the extra keys that actually apply to it.
+func (m Model) renderFieldPromptLine() string {
+	label := "value"
+	hint := "enter saves, esc cancels"
+	if f := m.field; f != nil {
+		label = f.label
+		switch {
+		case f.line == 0:
+			hint = "enter saves, ctrl+g generates, ctrl+r reveals, esc cancels"
+		case f.secret:
+			hint = "enter saves, ctrl+r reveals, esc cancels"
+		}
+	}
+	return m.styles.Accent.Render(" "+label+" → ") + m.input.View() +
+		m.styles.Muted.Render("  ("+hint+")")
+}
+
 func (m Model) renderConfirmLine() string {
 	warn := m.styles.Danger.Render(" delete " + m.confirmDelete + "? ")
 	return warn + m.styles.Muted.Render("y to confirm, any other key to cancel")
@@ -325,6 +345,7 @@ func (m Model) listHints() []keyHint {
 		{k.Open, "open"},
 		{k.CopyPassword, "copy pw"},
 		{k.CopyUsername, "user"},
+		{k.SetUsername, "set user"},
 		{k.Search, "search"},
 		{k.Add, "add"},
 		{k.Edit, "edit"},
@@ -429,7 +450,9 @@ func (m Model) detailHints() []keyHint {
 		{k.CopyUsername, "user"},
 		{k.CopyURL, "url"},
 		{"1-9", "copy field"},
-		{k.Edit, "edit"},
+		{k.Edit, "edit field"},
+		{k.SetUsername, "account"},
+		{k.EditFile, "$EDITOR"},
 		{k.Quit, "back"},
 	}
 }
@@ -533,15 +556,17 @@ func (m Model) helpLines() []string {
 		}},
 		{"Copy", [][2]string{
 			{k.CopyPassword, "copy the password"},
-			{k.CopyUsername, "copy the username field"},
+			{k.CopyUsername, "copy the username or email"},
 			{k.CopyURL, "copy the url field"},
 			{"1-9", "copy the nth field (detail view)"},
 			{"c", "copy the field under the cursor"},
 		}},
 		{"Entry", [][2]string{
 			{k.Reveal, "reveal / hide the password (detail view)"},
+			{k.SetUsername, "register the username / email"},
 			{k.Add, "add an entry"},
-			{k.Edit, "edit in $EDITOR via pass edit"},
+			{k.Edit, "edit the focused field (open entry)"},
+			{k.EditFile, "edit the whole file in $EDITOR"},
 			{k.Delete, "delete, with confirmation"},
 			{k.Rename, "rename / move"},
 			{k.Reload, "reload the store"},
@@ -549,6 +574,7 @@ func (m Model) helpLines() []string {
 		{"Commands", [][2]string{
 			{":add [name]", "open the new-entry dialog"},
 			{":generate <name> [len]", "add a password-only entry"},
+			{":account", "register the account on an entry"},
 			{":rename <old> <new>", "move an entry"},
 			{":delete [name]", "delete an entry"},
 			{":theme [name]", "list or set a palette"},
@@ -696,6 +722,8 @@ func (m Model) modeLabel() string {
 		return "HELP"
 	case modeDetail:
 		return "ENTRY"
+	case modeEditField:
+		return "EDIT"
 	}
 	return "LIST"
 }

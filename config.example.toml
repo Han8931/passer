@@ -17,6 +17,10 @@ store_dir = ''
 # Field names treated as the account identifier by the "copy username" key.
 # These are tried first; the built-in conventions (login, username, user,
 # email, account) still apply afterwards.
+#
+# With no field match, the key falls back to an email-looking address on a bare
+# line, then to the entry's own name ("web/github.com/you@example.com"). Add a
+# key here if your store labels the account with something else, e.g. 'acct'.
 username_fields = ['login', 'username', 'user', 'email']
 
 
@@ -68,10 +72,13 @@ reload = 'R'          # re-read the store from disk
 copy_password = 'y'
 copy_username = 'u'
 copy_url = 'b'
+set_username = 'U'    # register the account on an entry, without $EDITOR
 
 reveal = ' '          # show/hide the password in the detail view
 add = 'a'
-edit = 'e'            # open the entry in $EDITOR via `pass edit`
+edit = 'e'            # edit the focused field in an open entry; from the
+                      # list, open the whole file in $EDITOR
+edit_file = 'E'       # always open the whole file in $EDITOR via `pass edit`
 delete = 'D'
 rename = 'm'          # rename / move
 theme_toggle = 't'    # cycle palettes, applied and saved immediately
