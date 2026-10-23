@@ -572,8 +572,10 @@ func TestTabCompletesCommandNames(t *testing.T) {
 		{"hel", []tea.KeyMsg{tabKey}, "help "},
 		{"co", []tea.KeyMsg{tabKey}, "config "},
 		{"zzz", []tea.KeyMsg{tabKey}, "zzz"},
-		// Once an argument is being typed, the command name is settled.
-		{"theme pur", []tea.KeyMsg{tabKey}, "theme pur"},
+		// Commands that take a name or a number of the user's own get no
+		// argument completion.
+		{"delete web/", []tea.KeyMsg{tabKey}, "delete web/"},
+		{"generate web/x 4", []tea.KeyMsg{tabKey}, "generate web/x 4"},
 		// "re" is shared by reload and rename, so there is nothing to extend:
 		// the first Tab offers a candidate and the next walks on.
 		{"re", []tea.KeyMsg{tabKey}, "reload"},
@@ -611,6 +613,72 @@ func TestTypingEndsTheCompletionCycle(t *testing.T) {
 	// An unambiguous completion has nothing left to cycle through.
 	if m := commandLineAfter(t, "hel", tabKey); m.completion != nil {
 		t.Error("completing a single match should not leave a cycle behind")
+	}
+}
+
+// :theme takes one of a fixed set of palettes, so the command line both lists
+// and completes them.
+func TestThemeArgumentCompletion(t *testing.T) {
+	presets := config.ThemePresetNames()
+
+	cases := []struct {
+		typed string
+		keys  []tea.KeyMsg
+		want  string
+	}{
+		// Completing the name opens the argument; the next Tab offers palettes.
+		{"the", []tea.KeyMsg{tabKey}, "theme "},
+		{"the", []tea.KeyMsg{tabKey, tabKey}, "theme " + presets[0]},
+		{"theme ", []tea.KeyMsg{tabKey}, "theme " + presets[0]},
+		{"theme ", []tea.KeyMsg{shiftTabKey}, "theme " + presets[len(presets)-1]},
+		{"theme ", []tea.KeyMsg{tabKey, tabKey}, "theme " + presets[1]},
+		// A partial palette name completes when only one matches.
+		{"theme pur", []tea.KeyMsg{tabKey}, "theme purple"},
+		{"theme zzz", []tea.KeyMsg{tabKey}, "theme zzz"},
+		// :theme takes a single argument, so nothing is offered past it.
+		{"theme purple ", []tea.KeyMsg{tabKey}, "theme purple "},
+	}
+
+	for _, c := range cases {
+		m := commandLineAfter(t, c.typed, c.keys...)
+		if got := m.input.Value(); got != c.want {
+			t.Errorf("%q + %d key(s) = %q, want %q", c.typed, len(c.keys), got, c.want)
+		}
+	}
+
+	// Every completed palette has to be one :theme actually accepts.
+	for _, name := range presets {
+		if _, ok := config.PresetTheme(name); !ok {
+			t.Errorf("completion offers %q, which :theme rejects", name)
+		}
+	}
+}
+
+// Typing ":theme" is enough to see the palettes: the list must not wait for a
+// Tab, since not knowing the names is the reason to want it.
+func TestThemePalettesAreListedWithoutTab(t *testing.T) {
+	for _, typed := range []string{"theme", "theme ", "theme f"} {
+		m := commandLineAfter(t, typed)
+		if m.completion != nil {
+			t.Fatalf("%q: no key was pressed, so there is no cycle to walk", typed)
+		}
+		plain := stripANSI(m.renderCommandLine())
+		if !strings.Contains(plain, "forest") {
+			t.Errorf("%q lists no palettes: %q", typed, plain)
+		}
+	}
+	// A filtered list drops the palettes that no longer match.
+	plain := stripANSI(commandLineAfter(t, "theme f").renderCommandLine())
+	if strings.Contains(plain, "purple") {
+		t.Errorf("%q should list only palettes starting with f", plain)
+	}
+	// A palette typed out in full is not echoed back beside the input.
+	if plain := stripANSI(commandLineAfter(t, "theme forest").renderCommandLine()); strings.Count(plain, "forest") != 1 {
+		t.Errorf("%q repeats the finished argument", plain)
+	}
+	// Other commands' arguments are the user's own, so nothing is listed.
+	if hits, _ := commandLineAfter(t, "delete ").commandCandidates(); len(hits) > 0 {
+		t.Errorf("delete offers a candidate list: %v", hits)
 	}
 }
 

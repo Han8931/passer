@@ -313,7 +313,7 @@ func (m Model) renderCommandLine() string {
 	return line + m.completionMenu(lipgloss.Width(line))
 }
 
-// completionMenu lists the candidates a Tab cycle is walking, with the one
+// completionMenu lists the candidates for what is being typed, with the one
 // currently in the input picked out.
 //
 // It shares the single prompt line with the input, so when the names don't fit
@@ -321,8 +321,8 @@ func (m Model) renderCommandLine() string {
 // the hint bar follows, and the active candidate is readable in the input
 // regardless.
 func (m Model) completionMenu(used int) string {
-	c := m.completion
-	if c == nil || len(c.hits) < 2 {
+	hits, active := m.commandCandidates()
+	if len(hits) == 0 {
 		return ""
 	}
 	const gap = 2
@@ -333,20 +333,39 @@ func (m Model) completionMenu(used int) string {
 
 	var parts []string
 	width := 0
-	for i, name := range c.hits {
-		w := len(name) + 1 // command names are ASCII; plus one separating space
+	for i, name := range hits {
+		w := len(name) + 1 // command and palette names are ASCII; plus a space
 		if width+w > room {
 			parts = append(parts, m.styles.Muted.Render("…"))
 			break
 		}
 		width += w
 		style := m.styles.Muted
-		if i == c.index {
+		if i == active {
 			style = m.styles.MatchHit
 		}
 		parts = append(parts, style.Render(name))
 	}
 	return strings.Repeat(" ", gap) + strings.Join(parts, " ")
+}
+
+// commandCandidates are the names to list beside the prompt, and which of them
+// is in the input (-1 for none).
+//
+// A Tab cycle supplies its own. Without one, a command whose argument comes
+// from a fixed set still lists it, so typing ":theme" shows the palettes
+// without having to press anything or run the command to find out.
+func (m Model) commandCandidates() ([]string, int) {
+	if c := m.completion; c != nil {
+		return c.hits, c.index
+	}
+	hits, keep := commandArgCandidates(m.input.Value())
+	// Once the argument is typed out in full, repeating it beside the input
+	// says nothing the input doesn't.
+	if len(hits) == 1 && strings.TrimPrefix(m.input.Value(), keep) == hits[0] {
+		return nil, -1
+	}
+	return hits, -1
 }
 
 func (m Model) renderRenameLine() string {

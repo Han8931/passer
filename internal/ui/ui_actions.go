@@ -984,13 +984,8 @@ func (m Model) commandHistoryStep(delta int) (tea.Model, tea.Cmd) {
 }
 
 // completeCommandName advances command-line completion by one Tab (delta -1
-// for shift+tab).
-//
-// The first Tab fills in as much as is unambiguous — the whole name when only
-// one command matches, otherwise the prefix every candidate shares. From there
-// each Tab writes the next candidate in full, so an ambiguous prefix is still
-// only a keypress or two from the command you meant; the prompt line lists the
-// candidates while the cycle runs.
+// for shift+tab), completing either the command name or — past its first space
+// — an argument the command draws from a fixed set.
 func (m Model) completeCommandName(delta int) Model {
 	if m.completion != nil && m.completion.value == m.input.Value() {
 		return m.cycleCompletion(delta)
@@ -998,25 +993,36 @@ func (m Model) completeCommandName(delta int) Model {
 
 	m.completion = nil
 	prefix := strings.TrimLeft(m.input.Value(), " ")
-	// Completion only ever names a command, so once an argument is being typed
-	// there is nothing to fill in.
 	if strings.ContainsAny(prefix, " \t") {
-		return m
+		// The name is settled; the command decides what may follow it.
+		hits, keep := commandArgCandidates(m.input.Value())
+		return m.offerCompletion(keep, strings.TrimPrefix(m.input.Value(), keep), hits, "", delta)
 	}
+	// A completed name opens its argument with a space.
+	return m.offerCompletion("", prefix, commandMatches(prefix), " ", delta)
+}
 
-	hits := commandMatches(prefix)
+// offerCompletion fills in whatever is unambiguous about the candidate being
+// typed and leaves a cycle behind when several remain.
+//
+// The first Tab fills in as much as every candidate shares — the whole thing,
+// plus suffix, when only one matches. From there each Tab writes the next
+// candidate in full, so an ambiguous prefix is still only a keypress or two
+// from what you meant; the prompt line lists the candidates while the cycle
+// runs. keep is the part of the line before the candidate, and stem the partial
+// candidate being replaced.
+func (m Model) offerCompletion(keep, stem string, hits []string, suffix string, delta int) Model {
 	switch len(hits) {
 	case 0:
 		return m
 	case 1:
-		// Unambiguous: finish the name and open the argument.
-		m.setCommandValue(hits[0] + " ")
+		m.setCommandValue(keep + hits[0] + suffix)
 		return m
 	}
 
-	m.completion = &completion{hits: hits, index: -1}
-	if common := commonPrefix(hits); len(common) > len(prefix) {
-		m.setCommandValue(common)
+	m.completion = &completion{prefix: keep, hits: hits, index: -1}
+	if common := commonPrefix(hits); len(common) > len(stem) {
+		m.setCommandValue(keep + common)
 		return m
 	}
 	// Nothing left to extend, so this Tab goes straight to a candidate.
@@ -1036,7 +1042,7 @@ func (m Model) cycleCompletion(delta int) Model {
 		c.index = n - 1
 	}
 	m.completion = &c
-	m.setCommandValue(c.hits[c.index])
+	m.setCommandValue(c.prefix + c.hits[c.index])
 	return m
 }
 
@@ -1052,8 +1058,39 @@ func (m *Model) setCommandValue(value string) {
 
 // commandMatches lists the commands starting with prefix, in cycle order.
 func commandMatches(prefix string) []string {
+	return prefixMatches(commandNames, prefix)
+}
+
+// commandArgCandidates lists the values that can follow the command on the
+// given command line, along with the text to keep in front of them.
+//
+// Only :theme qualifies: its argument is a closed set the user is not expected
+// to have memorised, so the palettes are worth both completing and listing.
+// Everything else takes a name or a number that only the user knows.
+func commandArgCandidates(value string) (hits []string, keep string) {
+	fields := strings.Fields(value)
+	if len(fields) == 0 || fields[0] != "theme" {
+		return nil, ""
+	}
+	names := config.ThemePresetNames()
+	switch {
+	case len(fields) == 1:
+		// The command name is typed but no argument is: offer every palette.
+		if strings.HasSuffix(value, " ") {
+			return names, value
+		}
+		return names, value + " "
+	case len(fields) == 2 && !strings.HasSuffix(value, " "):
+		return prefixMatches(names, fields[1]), strings.TrimSuffix(value, fields[1])
+	}
+	// A second argument is being typed, which :theme does not take.
+	return nil, ""
+}
+
+// prefixMatches keeps the names starting with prefix, in their given order.
+func prefixMatches(names []string, prefix string) []string {
 	var hits []string
-	for _, name := range commandNames {
+	for _, name := range names {
 		if strings.HasPrefix(name, prefix) {
 			hits = append(hits, name)
 		}

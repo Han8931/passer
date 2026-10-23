@@ -296,6 +296,12 @@ you cycle, and the one in the input is highlighted. Pressing `Tab` on an empty
 command line walks the whole set, so you can browse the commands without
 remembering any of them.
 
+`:theme` is the one command whose argument comes from a fixed set, so typing it
+lists the palettes beside the prompt straight away — no `Tab` needed — and the
+list narrows as you type. `Tab` completes and cycles them exactly as it does
+command names, so `:theme` + `Tab` walks the palettes by name. Every other
+command takes a name or a number that only you know, and offers nothing.
+
 - `:add [name]` — open the New Entry dialog, optionally prefilled
 - `:generate <name> [length]` — add a password-only entry
 - `:account` — register the account on the selected entry (same as `U`)

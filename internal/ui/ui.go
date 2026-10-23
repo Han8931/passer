@@ -97,8 +97,9 @@ type uiStyles struct {
 // first Tab and dropped by any other key, so a cycle can only ever walk
 // candidates that still match what was typed.
 type completion struct {
-	hits  []string // candidate command names, in cycle order
-	index int      // which hit is in the input; -1 before the first one
+	prefix string   // line kept in front of the candidate, e.g. "theme "
+	hits   []string // candidates, in cycle order
+	index  int      // which hit is in the input; -1 before the first one
 	// value is what the last Tab wrote. A mismatch means the user has typed
 	// since, which invalidates the cycle.
 	value string
