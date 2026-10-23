@@ -93,6 +93,17 @@ type uiStyles struct {
 	MatchHit    lipgloss.Style // fuzzy-matched characters in the list
 }
 
+// completion is a run of Tab presses on the command line. It is built on the
+// first Tab and dropped by any other key, so a cycle can only ever walk
+// candidates that still match what was typed.
+type completion struct {
+	hits  []string // candidate command names, in cycle order
+	index int      // which hit is in the input; -1 before the first one
+	// value is what the last Tab wrote. A mismatch means the user has typed
+	// since, which invalidates the cycle.
+	value string
+}
+
 // addState backs the Create Entry modal.
 type addState struct {
 	inputs   []textinput.Model
@@ -195,6 +206,7 @@ type Model struct {
 
 	commandHistory    []string
 	commandHistoryIdx int
+	completion        *completion // live only while Tab is being pressed
 
 	status    string
 	statusErr bool

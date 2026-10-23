@@ -309,7 +309,44 @@ func (m Model) renderSearchLine() string {
 }
 
 func (m Model) renderCommandLine() string {
-	return m.styles.Accent.Render(" : ") + m.input.View()
+	line := m.styles.Accent.Render(" : ") + m.input.View()
+	return line + m.completionMenu(lipgloss.Width(line))
+}
+
+// completionMenu lists the candidates a Tab cycle is walking, with the one
+// currently in the input picked out.
+//
+// It shares the single prompt line with the input, so when the names don't fit
+// in the room left over, whole ones are dropped from the end — the same rule
+// the hint bar follows, and the active candidate is readable in the input
+// regardless.
+func (m Model) completionMenu(used int) string {
+	c := m.completion
+	if c == nil || len(c.hits) < 2 {
+		return ""
+	}
+	const gap = 2
+	room := m.panelInnerWidth() - used - gap
+	if room < 4 {
+		return ""
+	}
+
+	var parts []string
+	width := 0
+	for i, name := range c.hits {
+		w := len(name) + 1 // command names are ASCII; plus one separating space
+		if width+w > room {
+			parts = append(parts, m.styles.Muted.Render("…"))
+			break
+		}
+		width += w
+		style := m.styles.Muted
+		if i == c.index {
+			style = m.styles.MatchHit
+		}
+		parts = append(parts, style.Render(name))
+	}
+	return strings.Repeat(" ", gap) + strings.Join(parts, " ")
 }
 
 func (m Model) renderRenameLine() string {

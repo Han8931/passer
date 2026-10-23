@@ -285,9 +285,16 @@ than jumping back to the top.
 
 ## Commands
 
-`:` opens the command line. `Tab` completes the command name (extending to the
-longest shared prefix when ambiguous), `↑`/`↓` walk previously run commands, and
-`Esc` cancels.
+`:` opens the command line. `↑`/`↓` walk previously run commands, and `Esc`
+cancels.
+
+`Tab` completes the command name. When only one command matches what you have
+typed it is filled in whole, ready for an argument; otherwise `Tab` fills in as
+much as every candidate shares and then steps through them one press at a time,
+with `Shift+Tab` going back. The candidates are listed beside the prompt while
+you cycle, and the one in the input is highlighted. Pressing `Tab` on an empty
+command line walks the whole set, so you can browse the commands without
+remembering any of them.
 
 - `:add [name]` — open the New Entry dialog, optionally prefilled
 - `:generate <name> [length]` — add a password-only entry

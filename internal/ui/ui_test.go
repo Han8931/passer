@@ -540,21 +540,125 @@ func TestIsSecretField(t *testing.T) {
 	}
 }
 
-func TestCompleteCommand(t *testing.T) {
-	if got := completeCommand("hel"); got != "help " {
-		t.Errorf("completeCommand(hel) = %q, want %q", got, "help ")
+// commandLineAfter types raw into the command line, then presses keys, and
+// returns the model so both the input and the completion state can be checked.
+func commandLineAfter(t *testing.T, raw string, keys ...tea.KeyMsg) Model {
+	t.Helper()
+	m := testModel("web/github")
+	m.mode, m.prevMode = modeCommand, modeList
+	m.input.SetValue(raw)
+	m.input.CursorEnd()
+	for _, key := range keys {
+		model, _ := m.keyCommand(key)
+		m = model.(Model)
 	}
-	// "re" is ambiguous between reload and rename, so it extends only to the
-	// shared prefix.
-	if got := completeCommand("re"); got != "re" {
-		t.Errorf("completeCommand(re) = %q, want the ambiguous prefix unchanged", got)
+	return m
+}
+
+var (
+	tabKey      = tea.KeyMsg{Type: tea.KeyTab}
+	shiftTabKey = tea.KeyMsg{Type: tea.KeyShiftTab}
+	backspace   = tea.KeyMsg{Type: tea.KeyBackspace}
+)
+
+func TestTabCompletesCommandNames(t *testing.T) {
+	cases := []struct {
+		typed string
+		keys  []tea.KeyMsg
+		want  string
+	}{
+		// Only one command starts with "hel", so Tab finishes it and leaves the
+		// cursor past a space, ready for an argument.
+		{"hel", []tea.KeyMsg{tabKey}, "help "},
+		{"co", []tea.KeyMsg{tabKey}, "config "},
+		{"zzz", []tea.KeyMsg{tabKey}, "zzz"},
+		// Once an argument is being typed, the command name is settled.
+		{"theme pur", []tea.KeyMsg{tabKey}, "theme pur"},
+		// "re" is shared by reload and rename, so there is nothing to extend:
+		// the first Tab offers a candidate and the next walks on.
+		{"re", []tea.KeyMsg{tabKey}, "reload"},
+		{"re", []tea.KeyMsg{tabKey, tabKey}, "rename"},
+		{"re", []tea.KeyMsg{tabKey, tabKey, tabKey}, "reload"}, // wraps around
+		{"re", []tea.KeyMsg{shiftTabKey}, "rename"},            // cycles backwards
+		{"re", []tea.KeyMsg{tabKey, shiftTabKey}, "rename"},    // and wraps backwards
+		{"a", []tea.KeyMsg{tabKey}, "account"},
+		{"a", []tea.KeyMsg{tabKey, tabKey}, "add"},
+		// Editing restarts completion rather than resuming the stale cycle:
+		// "reloa" is unambiguous again, so this Tab completes instead of
+		// stepping on to rename.
+		{"re", []tea.KeyMsg{tabKey, backspace, tabKey}, "reload "},
+		// Nothing typed at all: Tab offers the first command.
+		{"", []tea.KeyMsg{tabKey}, "account"},
+		{"", []tea.KeyMsg{shiftTabKey}, "theme"},
 	}
-	if got := completeCommand("zzz"); got != "zzz" {
-		t.Errorf("completeCommand(zzz) = %q, want it left alone", got)
+
+	for _, c := range cases {
+		m := commandLineAfter(t, c.typed, c.keys...)
+		if got := m.input.Value(); got != c.want {
+			t.Errorf("%q + %d key(s) = %q, want %q", c.typed, len(c.keys), got, c.want)
+		}
 	}
-	// Once an argument is being typed, the command name is settled.
-	if got := completeCommand("theme pur"); got != "theme pur" {
-		t.Errorf("completeCommand(theme pur) = %q, want it left alone", got)
+}
+
+// A cycle must not outlive the prefix it was built for.
+func TestTypingEndsTheCompletionCycle(t *testing.T) {
+	if m := commandLineAfter(t, "re", tabKey); m.completion == nil {
+		t.Fatal("Tab on an ambiguous prefix should leave a cycle to walk")
+	}
+	if m := commandLineAfter(t, "re", tabKey, backspace); m.completion != nil {
+		t.Error("editing the command line should drop the candidate list")
+	}
+	// An unambiguous completion has nothing left to cycle through.
+	if m := commandLineAfter(t, "hel", tabKey); m.completion != nil {
+		t.Error("completing a single match should not leave a cycle behind")
+	}
+}
+
+func TestCommonPrefix(t *testing.T) {
+	cases := []struct {
+		names []string
+		want  string
+	}{
+		{nil, ""},
+		{[]string{"generate"}, "generate"},
+		{[]string{"generate", "gen"}, "gen"},
+		{[]string{"reload", "rename"}, "re"},
+		{[]string{"add", "theme"}, ""},
+	}
+	for _, c := range cases {
+		if got := commonPrefix(c.names); got != c.want {
+			t.Errorf("commonPrefix(%v) = %q, want %q", c.names, got, c.want)
+		}
+	}
+}
+
+// The candidate list shares the single prompt line with the input, so it must
+// never widen that line past the terminal — the layout has no room to spare.
+func TestCompletionMenuFitsThePromptLine(t *testing.T) {
+	for _, width := range []int{14, 20, 40, 80, 120} {
+		m := commandLineAfter(t, "", tabKey)
+		m.width = width
+		if m.completion == nil {
+			t.Fatal("Tab on an empty command line should list every command")
+		}
+		line := m.renderCommandLine()
+		if got := lipgloss.Width(line); got > width-2 {
+			t.Errorf("width %d: command line renders %d cells wide", width, got)
+		}
+	}
+
+	// With room to spare, every candidate is listed and the active one is on
+	// the line exactly once more than the others (it is in the input too).
+	m := commandLineAfter(t, "re", tabKey)
+	m.width = 120
+	plain := stripANSI(m.renderCommandLine())
+	for _, name := range []string{"reload", "rename"} {
+		if !strings.Contains(plain, name) {
+			t.Errorf("candidate %q missing from %q", name, plain)
+		}
+	}
+	if n := strings.Count(plain, "reload"); n != 2 {
+		t.Errorf("active candidate appears %d times in %q, want twice", n, plain)
 	}
 }
 

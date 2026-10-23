@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -205,6 +204,7 @@ func (m Model) keyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.EchoMode = textinput.EchoNormal
 		m.input.Focus()
 		m.commandHistoryIdx = -1
+		m.completion = nil
 		return m, nil
 
 	case k.Help:
@@ -424,6 +424,7 @@ func (m Model) keyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.EchoMode = textinput.EchoNormal
 		m.input.Focus()
 		m.commandHistoryIdx = -1
+		m.completion = nil
 		return m, nil
 	}
 
@@ -920,6 +921,17 @@ var commandNames = []string{
 
 func (m Model) keyCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "tab":
+		return m.completeCommandName(1), nil
+	case "shift+tab":
+		return m.completeCommandName(-1), nil
+	}
+
+	// Every other key ends the cycle: the candidate list describes a prefix
+	// that is no longer what the input holds.
+	m.completion = nil
+
+	switch msg.String() {
 	case "esc":
 		m.mode = m.prevMode
 		m.input.Blur()
@@ -936,11 +948,6 @@ func (m Model) keyCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.commandHistory = append(m.commandHistory, raw)
 		m.commandHistoryIdx = -1
 		return m.runCommand(raw)
-
-	case "tab":
-		m.input.SetValue(completeCommand(m.input.Value()))
-		m.input.CursorEnd()
-		return m, nil
 
 	case "up":
 		return m.commandHistoryStep(1)
@@ -976,29 +983,92 @@ func (m Model) commandHistoryStep(delta int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// completeCommand fills in the unambiguous part of a command name.
-func completeCommand(input string) string {
-	prefix := strings.TrimSpace(input)
-	if strings.Contains(prefix, " ") {
-		return input
+// completeCommandName advances command-line completion by one Tab (delta -1
+// for shift+tab).
+//
+// The first Tab fills in as much as is unambiguous — the whole name when only
+// one command matches, otherwise the prefix every candidate shares. From there
+// each Tab writes the next candidate in full, so an ambiguous prefix is still
+// only a keypress or two from the command you meant; the prompt line lists the
+// candidates while the cycle runs.
+func (m Model) completeCommandName(delta int) Model {
+	if m.completion != nil && m.completion.value == m.input.Value() {
+		return m.cycleCompletion(delta)
 	}
+
+	m.completion = nil
+	prefix := strings.TrimLeft(m.input.Value(), " ")
+	// Completion only ever names a command, so once an argument is being typed
+	// there is nothing to fill in.
+	if strings.ContainsAny(prefix, " \t") {
+		return m
+	}
+
+	hits := commandMatches(prefix)
+	switch len(hits) {
+	case 0:
+		return m
+	case 1:
+		// Unambiguous: finish the name and open the argument.
+		m.setCommandValue(hits[0] + " ")
+		return m
+	}
+
+	m.completion = &completion{hits: hits, index: -1}
+	if common := commonPrefix(hits); len(common) > len(prefix) {
+		m.setCommandValue(common)
+		return m
+	}
+	// Nothing left to extend, so this Tab goes straight to a candidate.
+	return m.cycleCompletion(delta)
+}
+
+// cycleCompletion writes the next (or previous) candidate into the input.
+func (m Model) cycleCompletion(delta int) Model {
+	c := *m.completion // copy: Model is held by value
+	n := len(c.hits)
+	switch {
+	case c.index >= 0:
+		c.index = (c.index + delta + n) % n
+	case delta > 0:
+		c.index = 0
+	default:
+		c.index = n - 1
+	}
+	m.completion = &c
+	m.setCommandValue(c.hits[c.index])
+	return m
+}
+
+// setCommandValue replaces the command line, keeping the cycle's record of what
+// it wrote in step so that the next Tab can tell typing from cycling.
+func (m *Model) setCommandValue(value string) {
+	m.input.SetValue(value)
+	m.input.CursorEnd()
+	if m.completion != nil {
+		m.completion.value = value
+	}
+}
+
+// commandMatches lists the commands starting with prefix, in cycle order.
+func commandMatches(prefix string) []string {
 	var hits []string
 	for _, name := range commandNames {
 		if strings.HasPrefix(name, prefix) {
 			hits = append(hits, name)
 		}
 	}
-	if len(hits) == 0 {
-		return input
+	return hits
+}
+
+// commonPrefix is the longest prefix every name shares.
+func commonPrefix(names []string) string {
+	if len(names) == 0 {
+		return ""
 	}
-	if len(hits) == 1 {
-		return hits[0] + " "
-	}
-	sort.Strings(hits)
-	// Extend to the longest shared prefix, the same way shell completion does.
-	common := hits[0]
-	for _, h := range hits[1:] {
-		for !strings.HasPrefix(h, common) {
+	common := names[0]
+	for _, n := range names[1:] {
+		for !strings.HasPrefix(n, common) {
 			common = common[:len(common)-1]
 		}
 	}
