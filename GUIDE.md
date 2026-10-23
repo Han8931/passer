@@ -483,13 +483,21 @@ passer just removes the front end.
 ```bash
 go test ./...          # unit tests; nothing here decrypts
 scripts/sandbox.sh     # run passer against a throwaway key and store
+scripts/demo.sh        # the same sandbox, running the binary in bin/
 ```
 
 The sandbox creates a temporary GPG key (no passphrase), a password store
 seeded with sample entries, and its own config, then starts passer from the
 current sources. Your real store, keyring, and `~/.config/passer` are never
 touched, and everything is deleted when passer exits. The clipboard is the real
-one, so copy tests behave as they do in daily use.
+one, so copy tests behave as they do in daily use. The generated config pins
+`store_dir` to the sandbox fixtures, so a session can't quietly fall back to
+your real store if the environment changes under it.
 
 - `scripts/sandbox.sh pass ls` runs any command inside the sandbox instead.
 - `--keep` leaves the sandbox in place and prints the variables to reuse it.
+- `scripts/demo.sh` runs `bin/passer` rather than the sources, which is what
+  you want when checking the artifact you just built — build it first with
+  `go build -o bin/passer ./cmd/passer`. It creates the fixtures in the same
+  process that launches the binary, so nothing depends on a previous shell's
+  exports or a sandbox left over from an earlier run.

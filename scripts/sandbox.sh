@@ -73,7 +73,7 @@ mkdir -m 700 "${GNUPGHOME}"
 
 KEY_ID="passer-sandbox@example.com"
 gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
-  --quick-gen-key "${KEY_ID}" default default never 2>/dev/null
+  --quick-gen-key "${KEY_ID}" default default never
 pass init "${KEY_ID}" >/dev/null
 
 # Seed entries that exercise the interesting paths: metadata fields, a pass-otp
@@ -90,6 +90,10 @@ printf 'bare-line-pw\nhan@example.com\nThis line is a free-form note.\n' | seed 
 printf 'name-only-pw\n' | seed 'web/aws.amazon.com/han@example.com'
 
 install -m 0600 "${ROOT_DIR}/config.example.toml" "${PASSER_CONFIG}"
+
+# Pin this config to its fixtures even if the launch environment changes.
+sed "s|^store_dir = ''$|store_dir = '${PASSWORD_STORE_DIR}'|" \
+  "${ROOT_DIR}/config.example.toml" > "${PASSER_CONFIG}"
 
 echo "Sandbox ready at ${SANDBOX}"
 
