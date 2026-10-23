@@ -993,3 +993,53 @@ func TestThemeCanvasAndSelectedSearchContrast(t *testing.T) {
 		})
 	}
 }
+
+func TestCanvasRestoresColorsAfterNestedStyles(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+	for _, name := range config.ThemePresetNames() {
+		t.Run(name, func(t *testing.T) {
+			m := testModel("web/github")
+			theme, _ := config.PresetTheme(name)
+			m.styles = buildStyles(theme)
+			line := m.styles.Border.Render("│") + " entry " +
+				m.styles.Accent.Render("match") + " padding"
+			got := m.paintCanvas(line)
+			canvas := bgOpenSeq(m.styles.Base)
+			for _, plain := range []string{" entry ", " padding"} {
+				if !strings.Contains(got, "\x1b[0m"+canvas+plain) {
+					t.Errorf("canvas colors not restored before %q", plain)
+				}
+			}
+		})
+	}
+}
+
+func TestUnselectedEntryHasExplicitCanvasColors(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+	for _, profile := range []termenv.Profile{termenv.TrueColor, termenv.ANSI256} {
+		lipgloss.SetColorProfile(profile)
+		for _, name := range config.ThemePresetNames() {
+			m := testModel("web/first", "web/visible-entry")
+			theme, _ := config.PresetTheme(name)
+			m.styles = buildStyles(theme)
+			row, _ := m.renderListRow(1, m.listColumns(), m.panelInnerWidth(), true, "web")
+			canvas := bgOpenSeq(m.styles.Base)
+			if canvas == "" || !strings.HasPrefix(row, canvas) {
+				t.Fatalf("%s profile %v: unselected entry inherits terminal colors", name, profile)
+			}
+			if !strings.Contains(row, "visible-entry") {
+				t.Fatalf("%s profile %v: entry name missing", name, profile)
+			}
+			// Every inner reset must restore the row's foreground and background.
+			parts := strings.Split(row, "\x1b[0m")
+			for _, part := range parts[1 : len(parts)-1] {
+				if !strings.HasPrefix(part, canvas) {
+					t.Fatalf("%s profile %v: row colors lost after reset", name, profile)
+				}
+			}
+		}
+	}
+}

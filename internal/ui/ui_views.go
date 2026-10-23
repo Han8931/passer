@@ -47,7 +47,9 @@ func (m Model) paintCanvas(body string) string {
 		if m.width > 2 {
 			line = padTo(line, m.width-2)
 		}
-		lines[i] = m.styles.Base.Render(line)
+		// Inner labels and borders emit resets. Restore both canvas colors
+		// after each reset so plain text and padding never inherit the terminal.
+		lines[i] = stripeLine(m.styles.Base, line)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -266,6 +268,10 @@ func (m Model) renderListRow(i int, cols listColumns, inner int, continues bool,
 	line = padTo(line, inner)
 	if selected {
 		line = stripeLine(m.styles.Selection, line)
+	} else {
+		// A row must remain readable independently of the enclosing panel:
+		// folder and timestamp styles reset both terminal colors.
+		line = stripeLine(m.styles.Base, line)
 	}
 	return line, folder
 }
@@ -728,7 +734,7 @@ func (m Model) renderStatusBar() string {
 	}
 	sp := base.Render("  ")
 
-	left := chip("passer", th.Accent) + base.Render(" ") + chip(m.modeLabel(), th.StatusAltBg)
+	left := chip("passer", th.Accent) + base.Render(" ") + m.styles.StatusAlt.Bold(true).Render(" "+m.modeLabel()+" ")
 	if m.detailOpen() {
 		left += sp + seg(m.entry.Name, th.Heading)
 	} else {
@@ -805,8 +811,8 @@ func (m Model) statusRight(seg func(s, fg string) string, sp string) string {
 }
 
 // textOn picks near-black or white text for a hex background, whichever reads
-// better. Presets put both pale and saturated colors behind badges (dark's
-// accent is a light yellow), so a fixed text color fails on one or the other.
+// better. Presets put both pale and saturated colors behind badges, so a fixed
+// text color fails on one or the other.
 func textOn(bg string) string {
 	hex := strings.TrimPrefix(strings.TrimSpace(bg), "#")
 	if len(hex) != 6 {

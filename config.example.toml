@@ -93,20 +93,31 @@ theme_toggle = 't'    # cycle palettes, applied and saved immediately
 # can start from a palette and adjust a single hue.
 preset = 'light'
 
-background = '#F8FAFC'    # full terminal canvas
-foreground = '#0F172A'    # entry names, values, and input text
-title = '#2563EB'          # panel titles and section headings
-heading = '#0F766E'        # field labels
-accent = '#1D4ED8'         # cursor, panel title text, fuzzy-match highlights
-muted = '#475569'          # folder prefixes, masked values, secondary text
-success = '#15803D'
-warning = '#B45309'        # revealed secrets are drawn in this color
-danger = '#DC2626'         # errors and delete confirmations
-border = '#94A3B8'         # rounded panel frames
-selection_bg = '#DBEAFE'   # highlighted row
-selection_fg = '#0F172A'
-status_bg = '#E2E8F0'      # status bar
-status_fg = '#0F172A'
-status_alt_bg = '#E2E8F0'  # table header bar and key-hint chips
-status_alt_fg = '#334155'
-row_stripe_bg = '#F1F5F9'  # kept for bada compatibility; the list no longer stripes rows
+# The values below are the `light` palette, shown so you can see what each key
+# controls. They are the defaults when preset = 'light', so uncommenting one
+# changes nothing until you edit it. If you switch `preset` above to a dark
+# palette, delete these lines first — an uncommented light color overrides the
+# preset and will strand one element in the wrong palette.
+#
+# Each color is chosen to clear 4.5:1 against every surface it is drawn on
+# (3:1 for the border, which is a frame rather than text). Hand-tuning one is
+# fine; `go test ./internal/config` will tell you if a built-in palette ever
+# stops meeting that bar.
+
+# background = '#F5F2EB'     # full terminal canvas
+# foreground = '#25332F'     # entry names, values, and input text
+# title = '#1C5560'          # help-screen section titles
+# heading = '#3C5C53'        # field labels, and the entry name in the status bar
+# accent = '#23685D'         # cursor, panel title text, fuzzy-match highlights
+# muted = '#525B54'          # folder prefixes, masked values, secondary text
+# success = '#2F6B2A'        # the match counter in the status bar
+# warning = '#7A4A12'        # revealed secrets are drawn in this color
+# danger = '#B43E43'         # errors and delete confirmations
+# border = '#819081'         # rounded panel frames
+# selection_bg = '#C6DCD0'   # highlighted row
+# selection_fg = '#25332F'
+# status_bg = '#E6E8DF'      # status bar
+# status_fg = '#25332F'
+# status_alt_bg = '#D8DBCD'  # table header bar, mode badge, and key-hint chips
+# status_alt_fg = '#42574E'
+# row_stripe_bg = '#ECEFE6'  # kept for bada compatibility; the list no longer stripes rows

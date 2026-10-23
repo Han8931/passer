@@ -1,8 +1,10 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -167,6 +169,213 @@ func TestAllPresetsAreResolvable(t *testing.T) {
 			t.Errorf("palette %q has empty colors: %+v", name, theme)
 		}
 	}
+}
+
+// relativeLuminance implements the WCAG 2.1 definition for an "#RRGGBB"
+// string. Anything malformed returns false so the caller reports it as a bad
+// color rather than silently scoring it.
+func relativeLuminance(color string) (float64, bool) {
+	hex := strings.TrimPrefix(strings.TrimSpace(color), "#")
+	if len(hex) != 6 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	channel := func(c float64) float64 {
+		c /= 255
+		if c <= 0.03928 {
+			return c / 12.92
+		}
+		return math.Pow((c+0.055)/1.055, 2.4)
+	}
+	r := channel(float64(v >> 16 & 0xFF))
+	g := channel(float64(v >> 8 & 0xFF))
+	b := channel(float64(v & 0xFF))
+	return 0.2126*r + 0.7152*g + 0.0722*b, true
+}
+
+func contrastRatio(t *testing.T, fg, bg string) float64 {
+	t.Helper()
+	lf, ok := relativeLuminance(fg)
+	if !ok {
+		t.Fatalf("not a six-digit hex color: %q", fg)
+	}
+	lb, ok := relativeLuminance(bg)
+	if !ok {
+		t.Fatalf("not a six-digit hex color: %q", bg)
+	}
+	hi, lo := math.Max(lf, lb), math.Min(lf, lb)
+	return (hi + 0.05) / (lo + 0.05)
+}
+
+// TestPresetContrast pins the contract documented on Theme. The pairings are
+// the ones the renderer can actually produce, which is wider than it looks:
+// the detail view stripes a selected row's background underneath cells that
+// keep their own foreground, so muted, heading and warning all land on
+// selection_bg — warning by way of the revealed-secret style.
+func TestPresetContrast(t *testing.T) {
+	// Text needs 4.5:1 (WCAG AA); accent-on-selection is a single highlighted
+	// rune rather than a run of prose, so it is held to a looser 4:1.
+	text := []struct {
+		fg, bg string
+		min    float64
+	}{
+		{"Foreground", "Background", 4.5},
+		{"Muted", "Background", 4.5},
+		{"Title", "Background", 4.5},
+		{"Heading", "Background", 4.5},
+		{"Accent", "Background", 4.5},
+		{"Success", "Background", 4.5},
+		{"Warning", "Background", 4.5},
+		{"Danger", "Background", 4.5},
+
+		{"SelectionFg", "SelectionBg", 4.5},
+		{"Heading", "SelectionBg", 4.5},
+		{"Muted", "SelectionBg", 4.5},
+		{"Warning", "SelectionBg", 4.5},
+		{"Accent", "SelectionBg", 4.0},
+
+		{"StatusFg", "StatusBg", 4.5},
+		{"Muted", "StatusBg", 4.5},
+		{"Heading", "StatusBg", 4.5},
+		{"Success", "StatusBg", 4.5},
+		{"Warning", "StatusBg", 4.5},
+		{"Danger", "StatusBg", 4.5},
+
+		{"StatusAltFg", "StatusAltBg", 4.5},
+		{"Muted", "StatusAltBg", 4.5},
+
+		// The rounded frame is a graphical object, not text: WCAG asks 3:1.
+		{"Border", "Background", 3.0},
+	}
+	// Surfaces only have to be told apart from each other, so the thresholds
+	// are far below the text ones — but not 1.0, which is what a table header
+	// sharing the status bar's background would score.
+	surfaces := []struct {
+		a, b string
+		min  float64
+	}{
+		{"SelectionBg", "Background", 1.18},
+		{"StatusAltBg", "Background", 1.25},
+		{"StatusAltBg", "StatusBg", 1.12},
+	}
+
+	for _, name := range ThemePresetNames() {
+		t.Run(name, func(t *testing.T) {
+			theme, ok := PresetTheme(name)
+			if !ok {
+				t.Fatalf("PresetTheme(%q) reported unknown", name)
+			}
+			color := themeColors(t, theme)
+			for _, c := range text {
+				if got := contrastRatio(t, color[c.fg], color[c.bg]); got < c.min {
+					t.Errorf("%s on %s = %.2f:1 (%s on %s); want >= %.1f:1",
+						c.fg, c.bg, got, color[c.fg], color[c.bg], c.min)
+				}
+			}
+			for _, s := range surfaces {
+				if got := contrastRatio(t, color[s.a], color[s.b]); got < s.min {
+					t.Errorf("surfaces %s and %s = %.2f:1 (%s and %s); they will not read as separate bands, want >= %.2f:1",
+						s.a, s.b, got, color[s.a], color[s.b], s.min)
+				}
+			}
+		})
+	}
+}
+
+// themeColors indexes a Theme by field name so the contrast table can name
+// pairings in the same vocabulary as the TOML keys.
+func themeColors(t *testing.T, theme Theme) map[string]string {
+	t.Helper()
+	return map[string]string{
+		"Background":  theme.Background,
+		"Foreground":  theme.Foreground,
+		"Title":       theme.Title,
+		"Heading":     theme.Heading,
+		"Accent":      theme.Accent,
+		"Muted":       theme.Muted,
+		"Success":     theme.Success,
+		"Warning":     theme.Warning,
+		"Danger":      theme.Danger,
+		"Border":      theme.Border,
+		"SelectionBg": theme.SelectionBg,
+		"SelectionFg": theme.SelectionFg,
+		"StatusBg":    theme.StatusBg,
+		"StatusFg":    theme.StatusFg,
+		"StatusAltBg": theme.StatusAltBg,
+		"StatusAltFg": theme.StatusAltFg,
+	}
+}
+
+// TestSemanticRolesAreDistinguishable guards the roles that share a line. The
+// status bar puts the entry name (heading) beside the match counter (success),
+// and a palette tuned only for contrast against the canvas can leave them the
+// same color — which is how the earlier single-hue light palette lost the
+// signal in `success`.
+func TestSemanticRolesAreDistinguishable(t *testing.T) {
+	pairs := []struct{ a, b string }{
+		{"Accent", "Success"},
+		{"Heading", "Success"},
+	}
+	for _, name := range ThemePresetNames() {
+		t.Run(name, func(t *testing.T) {
+			theme, _ := PresetTheme(name)
+			color := themeColors(t, theme)
+			for _, p := range pairs {
+				dh := hueDistance(t, color[p.a], color[p.b])
+				ratio := contrastRatio(t, color[p.a], color[p.b])
+				// Either lever alone is enough to tell two roles apart.
+				if dh < 40 && ratio < 1.5 {
+					t.Errorf("%s (%s) and %s (%s) differ by only %.0f° of hue and %.2f:1; they read as one color side by side",
+						p.a, color[p.a], p.b, color[p.b], dh, ratio)
+				}
+			}
+		})
+	}
+}
+
+// hueDistance returns the shortest angle between two colors' hues, in degrees.
+func hueDistance(t *testing.T, a, b string) float64 {
+	t.Helper()
+	ha, hb := hueOf(t, a), hueOf(t, b)
+	d := math.Abs(ha - hb)
+	if d > 180 {
+		d = 360 - d
+	}
+	return d
+}
+
+func hueOf(t *testing.T, color string) float64 {
+	t.Helper()
+	hex := strings.TrimPrefix(strings.TrimSpace(color), "#")
+	v, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil || len(hex) != 6 {
+		t.Fatalf("not a six-digit hex color: %q", color)
+	}
+	r := float64(v>>16&0xFF) / 255
+	g := float64(v>>8&0xFF) / 255
+	b := float64(v&0xFF) / 255
+	max, min := math.Max(r, math.Max(g, b)), math.Min(r, math.Min(g, b))
+	d := max - min
+	if d == 0 {
+		return 0 // grey has no hue; callers fall back to the contrast test
+	}
+	var h float64
+	switch max {
+	case r:
+		h = math.Mod((g-b)/d, 6)
+	case g:
+		h = (b-r)/d + 2
+	default:
+		h = (r-g)/d + 4
+	}
+	h *= 60
+	if h < 0 {
+		h += 360
+	}
+	return h
 }
 
 func TestSaveRoundTrips(t *testing.T) {

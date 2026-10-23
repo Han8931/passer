@@ -367,33 +367,61 @@ Passer ships seven palettes with explicit canvas and text colors:
 **light** (default), **dark**, **purple**, **ocean**, **forest**, **rose**, and
 **graphite**. There are three ways to switch:
 
-- **`:theme` command** — run `:theme` to list them, or `:theme purple` to
-  switch. The change applies immediately and is saved to your config.
+- **`:theme` command** — typing `:theme` lists the palettes beside the prompt
+  and `Tab` cycles them by name, so you don't have to remember any; `:theme
+  purple` switches straight to one. The change applies immediately and is saved
+  to your config.
 - **Cycle live** — press `t` to rotate through the presets, applied and saved as
   you go.
-
-Switching this way rewrites only the `[theme]` table of your config, replacing
-it with the new `preset` line; the rest of the file, comments included, is
-left as it is. Any color overrides in `[theme]` are dropped with the old
-palette.
 - **Hand-tune** — set `preset` in `[theme]` and override individual keys. Any
   color you set wins over the preset, so you can start from `ocean` and adjust a
   single hue.
 
-The light palette uses a slate canvas with blue accents; dark uses deep slate
-with soft blue accents. Selected rows use a consistent contrasting text color,
-with underlined search matches.
+Switching with `:theme` or `t` rewrites only the `[theme]` table of your config,
+replacing it with the new `preset` line; the rest of the file, comments
+included, is left as it is. Any color overrides in `[theme]` are dropped with
+the old palette.
+
+The light palette uses warm ivory, deep teal accents, and soft sage selections.
+Dark pairs a charcoal-green canvas with pale mint accents. Both keep secondary
+text readable and reserve amber and red for warnings and errors. Selected rows
+use a consistent contrasting text color, with underlined search matches.
+
+After upgrading, run `:theme light` (or `:theme dark`) to apply the refreshed
+palette if your config still contains explicit colors from an older version.
+Note that this replaces the whole `[theme]` table, so any colors you hand-tuned
+are dropped along with the old ones.
 
 Theme keys control the canvas and framing:
 
 - `background` / `foreground` — the full canvas and default text colors
-
 - `border` — the rounded panel frames
-- `status_alt_bg` / `status_alt_fg` — the table-header bar and the key-hint chips
+- `status_alt_bg` / `status_alt_fg` — the table-header bar, the mode badge, and
+  the key-hint chips. This background has to stay distinct from both
+  `background` and `status_bg`, or those three elements stop reading as chips
+  and bars and dissolve into the surface behind them.
 
-One passer-specific note: `warning` is the color revealed secrets are drawn in.
-It is meant to be loud — it should be obvious at a glance that something
-sensitive is on screen.
+Every built-in palette holds to a contrast floor: text reaches 4.5:1 against
+each surface it is drawn on, and `border` reaches 3:1 against the canvas. The
+pairings are wider than the key names suggest — a revealed secret can sit on a
+selected row, so `warning` is checked against `selection_bg` too. If you edit a
+preset, `go test ./internal/config` checks the whole matrix for you.
+
+[`config.example.toml`](config.example.toml) documents every key against what it
+draws, and ships the light palette's values commented out — they are already the
+defaults, so uncommenting one changes nothing until you edit it. Delete that
+block before pointing `preset` at a dark palette: an uncommented light color
+outranks the preset and strands that one element in the wrong palette.
+
+Two notes specific to passer:
+
+- `warning` is the color revealed secrets are drawn in. It is meant to be loud
+  — it should be obvious at a glance that something sensitive is on screen.
+- `success` is the match counter in the status bar, which sits directly beside
+  the entry name in `heading`. The two need to be told apart at a glance, so
+  every palette keeps them at least 40° of hue or a 1.5:1 luminance step
+  apart. Despite the name, `title` is only the help screen's section titles —
+  panel titles use `accent`.
 
 ## Configuration
 
